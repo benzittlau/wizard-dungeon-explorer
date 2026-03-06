@@ -26,6 +26,12 @@ npm run serve
 
 Open `http://localhost:8080` in your browser.
 
+## Screenshots
+
+![Gameplay start](docs/screenshots/gameplay-start.png)
+![Gameplay action](docs/screenshots/gameplay-action.png)
+![Gameplay full page](docs/screenshots/gameplay-full.png)
+
 ## Project Structure
 
 - `index.html`: UI shell, HUD, and page styling.
