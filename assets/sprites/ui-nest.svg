@@ -1,7 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <circle cx="16" cy="16" r="12" fill="#2c343d"/>
-  <circle cx="16" cy="16" r="9" fill="#dce7ef"/>
-  <circle cx="16" cy="16" r="6" fill="#6f3826"/>
-  <path d="m12 11 7 4-6 6" fill="none" stroke="#f9e7d3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2"/>
-  <path d="m10 22 4-2m4-8 5 3" fill="none" stroke="#925c49" stroke-linecap="round" stroke-width="1.6"/>
+  <rect x="6" y="5" width="20" height="3" rx="1" fill="#5f6876"/>
+  <rect x="7" y="8" width="18" height="18" rx="1.5" fill="#1b212b"/>
+  <rect x="7" y="8" width="18" height="2" fill="#dce4ee"/>
+  <rect x="7" y="24" width="18" height="3" rx="1" fill="#5f6876"/>
+  <rect x="8" y="10" width="2" height="14" fill="#dce4ee"/>
+  <rect x="13" y="10" width="2" height="14" fill="#dce4ee"/>
+  <rect x="18" y="10" width="2" height="14" fill="#dce4ee"/>
+  <rect x="23" y="10" width="2" height="14" fill="#dce4ee"/>
+  <rect x="10" y="14" width="12" height="2" fill="#7f8999"/>
+  <rect x="11" y="17" width="10" height="6" fill="#5f6876"/>
+  <rect x="13" y="18" width="2" height="5" fill="#dce4ee"/>
+  <rect x="17" y="18" width="2" height="5" fill="#dce4ee"/>
 </svg>

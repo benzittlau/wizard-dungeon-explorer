@@ -251,7 +251,8 @@ function loadImage(src) {
     const img = new Image();
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error(`Failed to load image: ${src}`));
-    img.src = src;
+    const separator = src.includes("?") ? "&" : "?";
+    img.src = `${src}${separator}v=20260306b`;
   });
 }
 
@@ -685,7 +686,8 @@ function spawnSkeletonAt(x, y) {
     nextMoveAt: gameTime + randomInRange(0.08, 0.22),
     deathAge: 0,
     hitDx: 0,
-    hitDy: 0
+    hitDy: 0,
+    wobbleOffset: Math.random() * Math.PI * 2
   });
   return true;
 }
@@ -993,26 +995,50 @@ function update(dt) {
 function drawNest(nest, camX, camY) {
   const drawX = Math.round(nest.x - TILE_SIZE / 2 - camX);
   const drawY = Math.round(nest.y - TILE_SIZE / 2 - camY);
-  const pulse = 0.78 + Math.sin(performance.now() / 180) * 0.08;
+  const pulse = 0.94 + Math.sin(performance.now() / 220) * 0.025;
+  const sway = Math.sin(performance.now() / 260) * 0.35;
 
   ctx.save();
   ctx.translate(drawX + TILE_SIZE / 2, drawY + TILE_SIZE / 2);
+  ctx.translate(sway, 0);
   ctx.scale(pulse, pulse);
-  ctx.fillStyle = nest.destroyed ? "rgba(90, 100, 110, 0.35)" : "rgba(207, 228, 235, 0.9)";
-  ctx.beginPath();
-  ctx.arc(0, 0, 11, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = nest.destroyed ? "rgba(45, 52, 57, 0.7)" : "rgba(116, 56, 38, 0.95)";
-  ctx.beginPath();
-  ctx.arc(0, 0, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.strokeStyle = nest.destroyed ? "rgba(120, 120, 120, 0.5)" : "rgba(255, 240, 220, 0.8)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(-4, -6);
-  ctx.lineTo(5, -1);
-  ctx.lineTo(-3, 6);
-  ctx.stroke();
+
+  const iron = nest.destroyed ? "#687180" : "#d9dee8";
+  const ironDark = nest.destroyed ? "#3a4049" : "#6f7888";
+  const shadow = nest.destroyed ? "rgba(24, 28, 34, 0.34)" : "rgba(8, 11, 17, 0.28)";
+  const glow = nest.destroyed ? "rgba(120, 130, 145, 0.18)" : "rgba(230, 238, 248, 0.24)";
+
+  ctx.fillStyle = shadow;
+  ctx.fillRect(-10, -9, 20, 22);
+
+  ctx.fillStyle = ironDark;
+  ctx.fillRect(-11, -10, 22, 2);
+  ctx.fillRect(-10, 9, 20, 3);
+  ctx.fillRect(-10, -8, 2, 18);
+  ctx.fillRect(8, -8, 2, 18);
+
+  ctx.fillStyle = glow;
+  ctx.fillRect(-10, -9, 20, 1);
+  ctx.fillRect(-9, -8, 1, 18);
+
+  ctx.fillStyle = iron;
+  ctx.fillRect(-7, -8, 2, 17);
+  ctx.fillRect(-2, -8, 2, 17);
+  ctx.fillRect(3, -8, 2, 17);
+
+  ctx.fillRect(-8, -5, 16, 2);
+  ctx.fillRect(-8, 0, 16, 2);
+
+  ctx.fillStyle = ironDark;
+  ctx.fillRect(-5, 3, 10, 6);
+  ctx.fillRect(-3, 4, 2, 5);
+  ctx.fillRect(1, 4, 2, 5);
+
+  if (!nest.destroyed) {
+    ctx.fillStyle = "rgba(120, 210, 255, 0.18)";
+    ctx.fillRect(-8, -8, 16, 17);
+  }
+
   ctx.restore();
 }
 
@@ -1060,6 +1086,7 @@ function drawWorld(sprites) {
     let scale = 1;
     let offsetX = 0;
     let offsetY = 0;
+    let rotation = 0;
 
     if (skeleton.state === "dying") {
       const progress = Math.min(1, skeleton.deathAge / SKELETON_DEATH_DURATION);
@@ -1068,6 +1095,11 @@ function drawWorld(sprites) {
       const push = Math.max(0, 1 - skeleton.deathAge / SKELETON_HIT_FLASH_DURATION) * 3;
       offsetX = skeleton.hitDx * push;
       offsetY = skeleton.hitDy * push;
+      rotation = skeleton.hitDx * 0.08 * progress;
+    } else {
+      const wobbleTime = gameTime * 6 + skeleton.wobbleOffset;
+      offsetY = Math.sin(wobbleTime) * 0.8;
+      rotation = Math.sin(wobbleTime * 0.75) * 0.045;
     }
 
     const drawX = Math.round(skeleton.x - TILE_SIZE / 2 + offsetX - camX);
@@ -1078,6 +1110,7 @@ function drawWorld(sprites) {
     ctx.save();
     ctx.globalAlpha = alpha;
     ctx.translate(centerX, centerY);
+    ctx.rotate(rotation);
     ctx.scale(scale, scale);
     ctx.drawImage(sprites.skeleton[skeleton.facing], -TILE_SIZE / 2, -TILE_SIZE / 2, TILE_SIZE, TILE_SIZE);
 
