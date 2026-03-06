@@ -23,5 +23,13 @@
     "./assets/sprites/fireball-impact-1.svg",
     "./assets/sprites/fireball-impact-2.svg",
     "./assets/sprites/fireball-impact-3.svg"
-  ]
+  ],
+  "ui": {
+    "health": "./assets/sprites/ui-health.svg",
+    "fireball": "./assets/sprites/ui-fireball.svg",
+    "jump": "./assets/sprites/ui-jump.svg",
+    "nest": "./assets/sprites/ui-nest.svg",
+    "victory": "./assets/sprites/ui-victory.svg",
+    "defeat": "./assets/sprites/ui-defeat.svg"
+  }
 }

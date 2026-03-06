@@ -2,76 +2,67 @@ const TILE_SIZE = 32;
 const MAP_WIDTH = 30;
 const MAP_HEIGHT = 20;
 const PLAYER_SPEED = 140;
+const PLAYER_MAX_HEALTH = 5;
+const PLAYER_HIT_COOLDOWN = 0.9;
+const PLAYER_CONTACT_DAMAGE = 1;
 const FIREBALL_SPEED = 260;
 const FIREBALL_RADIUS = 4;
 const FIREBALL_STEP_PX = 2;
+const FIREBALL_COOLDOWN = 0.55;
+const JUMP_DISTANCE = TILE_SIZE * 2;
+const JUMP_COOLDOWN = 30;
 const IMPACT_DURATION = 0.24;
 const SKELETON_RADIUS = 10;
-const SKELETON_MOVE_INTERVAL_MIN = 0.9;
-const SKELETON_MOVE_INTERVAL_MAX = 1.2;
 const SKELETON_STEP = TILE_SIZE * 0.5;
 const SKELETON_DEATH_DURATION = 0.45;
 const SKELETON_HIT_FLASH_DURATION = 0.15;
+const SKELETON_MOVE_INTERVAL_MIN = 0.22;
+const SKELETON_MOVE_INTERVAL_MAX = 0.38;
+const SKELETON_AGGRO_RANGE = TILE_SIZE * 6;
+const SKELETON_ALIVE_CAP = 10;
+const NEST_MAX_HEALTH = 2;
+const NEST_HEAL_AMOUNT = 1;
+const NEST_SPAWN_INTERVAL_MIN = 2.4;
+const NEST_SPAWN_INTERVAL_MAX = 3.6;
 
-const SKELETON_SPAWN_TILES = [
-  [3, 1],
-  [6, 2],
+const NEST_TILES = [
   [10, 1],
   [15, 3],
-  [21, 1],
-  [25, 2],
-  [2, 7],
-  [4, 9],
-  [10, 8],
-  [18, 7],
   [24, 9],
-  [26, 12],
-  [6, 13],
   [16, 11],
-  [8, 16],
-  [13, 17],
-  [20, 17],
-  [27, 18],
-  [28, 5],
-  [28, 15]
+  [20, 17]
 ];
+
+const DEFAULT_UI_MANIFEST = {
+  health: "./assets/sprites/ui-health.svg",
+  fireball: "./assets/sprites/ui-fireball.svg",
+  jump: "./assets/sprites/ui-jump.svg",
+  nest: "./assets/sprites/ui-nest.svg",
+  victory: "./assets/sprites/ui-victory.svg",
+  defeat: "./assets/sprites/ui-defeat.svg"
+};
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-const statusEl = document.getElementById("status");
+const healthEl = document.getElementById("health");
+const fireballAbilityEl = document.getElementById("ability-fireball");
+const jumpAbilityEl = document.getElementById("ability-jump");
+const nestTrackEl = document.getElementById("nest-track");
+const runeIndicatorEl = document.getElementById("rune-indicator");
+const runeIconEl = document.getElementById("rune-icon");
+const overlayEl = document.getElementById("overlay");
+const overlayArtEl = document.getElementById("overlay-art");
+const overlayTitleEl = document.getElementById("overlay-title");
+const overlaySubtitleEl = document.getElementById("overlay-subtitle");
+const restartButtonEl = document.getElementById("restart-button");
 
 const keys = new Set();
 let inputClock = 0;
 const keyPressedAt = new Map();
 let castQueued = false;
-
-window.addEventListener("keydown", (e) => {
-  const key = e.key.toLowerCase();
-  if (e.code === "Space") {
-    e.preventDefault();
-    if (!e.repeat) {
-      castQueued = true;
-    }
-    return;
-  }
-  if (["w", "a", "s", "d"].includes(key)) {
-    e.preventDefault();
-    if (!keys.has(key)) {
-      keyPressedAt.set(key, ++inputClock);
-    }
-    keys.add(key);
-  }
-});
-window.addEventListener("keyup", (e) => {
-  if (e.code === "Space") {
-    return;
-  }
-  const key = e.key.toLowerCase();
-  keys.delete(key);
-  keyPressedAt.delete(key);
-});
+let jumpQueued = false;
 
 const map = [
   "##############################",
@@ -104,7 +95,9 @@ const player = {
   y: TILE_SIZE * 1.5,
   radius: 10,
   facing: "down",
-  won: false
+  health: PLAYER_MAX_HEALTH,
+  maxHealth: PLAYER_MAX_HEALTH,
+  invulnerableUntil: 0
 };
 
 const fireball = {
@@ -113,7 +106,12 @@ const fireball = {
   y: 0,
   vx: 0,
   vy: 0,
-  radius: FIREBALL_RADIUS
+  radius: FIREBALL_RADIUS,
+  cooldownUntil: 0
+};
+
+const jump = {
+  cooldownUntil: 0
 };
 
 const impactEffect = {
@@ -124,8 +122,67 @@ const impactEffect = {
 };
 
 const skeletons = [];
+const nests = [];
 let skeletonIdCounter = 0;
 let gameTime = 0;
+let gameState = "playing";
+let runeUnlocked = false;
+let last = performance.now();
+let uiManifest = { ...DEFAULT_UI_MANIFEST };
+const healthPips = [];
+const nestPips = [];
+
+const overlayState = {
+  visible: false
+};
+
+window.addEventListener("keydown", (e) => {
+  const key = e.key.toLowerCase();
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (!e.repeat) {
+      castQueued = true;
+    }
+    return;
+  }
+
+  if (e.key === "Shift") {
+    e.preventDefault();
+    if (!e.repeat) {
+      jumpQueued = true;
+    }
+    return;
+  }
+
+  if (e.key === "r" || e.key === "R") {
+    if (gameState === "won" || gameState === "lost") {
+      resetGame();
+    }
+    return;
+  }
+
+  if (["w", "a", "s", "d"].includes(key)) {
+    e.preventDefault();
+    if (!keys.has(key)) {
+      keyPressedAt.set(key, ++inputClock);
+    }
+    keys.add(key);
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  if (e.code === "Space" || e.key === "Shift") {
+    return;
+  }
+  const key = e.key.toLowerCase();
+  keys.delete(key);
+  keyPressedAt.delete(key);
+});
+
+restartButtonEl.addEventListener("click", () => {
+  resetGame();
+});
 
 function tileAtPixel(px, py) {
   const tx = Math.floor(px / TILE_SIZE);
@@ -177,6 +234,10 @@ function randomInRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 async function loadManifest() {
   const response = await fetch("./assets/sprites/manifest.json", { cache: "no-cache" });
   if (!response.ok) {
@@ -204,8 +265,7 @@ function normalizeDirectionalManifest(entry, label) {
     };
   }
 
-  const fallback =
-    entry?.down || entry?.up || entry?.left || entry?.right;
+  const fallback = entry?.down || entry?.up || entry?.left || entry?.right;
   if (!fallback) {
     throw new Error(`Manifest is missing ${label} sprite paths.`);
   }
@@ -234,6 +294,17 @@ function normalizeAnimationManifest(entry) {
     }
   }
   return [];
+}
+
+function normalizeUiManifest(entry) {
+  return {
+    health: entry?.health || DEFAULT_UI_MANIFEST.health,
+    fireball: entry?.fireball || DEFAULT_UI_MANIFEST.fireball,
+    jump: entry?.jump || DEFAULT_UI_MANIFEST.jump,
+    nest: entry?.nest || DEFAULT_UI_MANIFEST.nest,
+    victory: entry?.victory || DEFAULT_UI_MANIFEST.victory,
+    defeat: entry?.defeat || DEFAULT_UI_MANIFEST.defeat
+  };
 }
 
 async function loadSprites() {
@@ -267,6 +338,8 @@ async function loadSprites() {
           "./assets/sprites/fireball-impact-3.svg"
         ];
 
+  uiManifest = normalizeUiManifest(manifest.ui);
+
   const [
     wizardUp,
     wizardDown,
@@ -281,8 +354,7 @@ async function loadSprites() {
     skeletonRight,
     fireballFrames,
     impactFrames
-  ] =
-    await Promise.all([
+  ] = await Promise.all([
     loadImage(wizardManifest.up),
     loadImage(wizardManifest.down),
     loadImage(wizardManifest.left),
@@ -386,14 +458,157 @@ function triggerImpact(x, y) {
   impactEffect.age = 0;
 }
 
+function livingNestsCount() {
+  return nests.filter((nest) => !nest.destroyed).length;
+}
+
+function canCastFireball() {
+  return gameState === "playing" && !fireball.active && gameTime >= fireball.cooldownUntil;
+}
+
+function canJump() {
+  return gameState === "playing" && gameTime >= jump.cooldownUntil;
+}
+
+function fireballCooldownRemaining() {
+  return Math.max(0, fireball.cooldownUntil - gameTime);
+}
+
+function jumpCooldownRemaining() {
+  return Math.max(0, jump.cooldownUntil - gameTime);
+}
+
+function renderHealth() {
+  if (healthPips.length !== player.maxHealth) {
+    healthPips.length = 0;
+    healthEl.innerHTML = "";
+    for (let i = 0; i < player.maxHealth; i += 1) {
+      const pip = document.createElement("img");
+      pip.className = "hud-pip";
+      pip.src = uiManifest.health;
+      pip.alt = "";
+      pip.decoding = "async";
+      healthPips.push(pip);
+      healthEl.appendChild(pip);
+    }
+  }
+
+  healthPips.forEach((pip, index) => {
+    pip.classList.toggle("is-filled", index < player.health);
+    pip.classList.toggle("is-empty", index >= player.health);
+  });
+  healthEl.setAttribute("aria-label", `Health ${player.health} out of ${player.maxHealth}`);
+}
+
+function renderNestTrack() {
+  const destroyedCount = nests.filter((nest) => nest.destroyed).length;
+  if (nestPips.length !== nests.length) {
+    nestPips.length = 0;
+    nestTrackEl.innerHTML = "";
+    for (let i = 0; i < nests.length; i += 1) {
+      const marker = document.createElement("img");
+      marker.className = "objective-pip";
+      marker.src = uiManifest.nest;
+      marker.alt = "";
+      marker.decoding = "async";
+      nestPips.push(marker);
+      nestTrackEl.appendChild(marker);
+    }
+  }
+
+  nestPips.forEach((pip, index) => {
+    pip.classList.toggle("is-cleared", index < destroyedCount);
+  });
+  nestTrackEl.setAttribute("aria-label", `${destroyedCount} of ${nests.length} nests destroyed`);
+}
+
+function setAbilityVisual(slotEl, cooldownRemaining, cooldownDuration, activeLabel) {
+  const fillEl = slotEl.querySelector(".ability-fill");
+  const glowEl = slotEl.querySelector(".ability-ready");
+  const ready = cooldownRemaining <= 0;
+  const progress = ready ? 0 : clamp(cooldownRemaining / cooldownDuration, 0, 1);
+
+  fillEl.style.transform = `scaleY(${progress})`;
+  slotEl.classList.toggle("is-ready", ready);
+  glowEl.hidden = !ready;
+  slotEl.setAttribute("aria-label", ready ? `${activeLabel} ready` : `${activeLabel} cooling down`);
+}
+
+function updateHud() {
+  renderHealth();
+  renderNestTrack();
+
+  const runeLocked = !runeUnlocked;
+  runeIndicatorEl.classList.toggle("is-unlocked", !runeLocked);
+  runeIndicatorEl.classList.toggle("is-locked", runeLocked);
+  runeIndicatorEl.setAttribute("aria-label", runeLocked ? "Rune locked" : "Rune unlocked");
+  runeIconEl.src = "./assets/sprites/objective.svg";
+
+  setAbilityVisual(fireballAbilityEl, fireballCooldownRemaining(), FIREBALL_COOLDOWN, "Fireball");
+  setAbilityVisual(jumpAbilityEl, jumpCooldownRemaining(), JUMP_COOLDOWN, "Jump");
+}
+
+function showOverlay(kind) {
+  overlayState.visible = true;
+  overlayEl.hidden = false;
+  overlayEl.dataset.state = kind;
+
+  if (kind === "won") {
+    overlayArtEl.src = uiManifest.victory;
+    overlayTitleEl.textContent = "Dungeon Cleared";
+    overlaySubtitleEl.textContent = "The rune is yours. Press R or restart to run it again.";
+  } else {
+    overlayArtEl.src = uiManifest.defeat;
+    overlayTitleEl.textContent = "The Wizard Fell";
+    overlaySubtitleEl.textContent = "Recover your footing. Press R or restart to try again.";
+  }
+}
+
+function hideOverlay() {
+  overlayState.visible = false;
+  overlayEl.hidden = true;
+  overlayEl.dataset.state = "";
+}
+
 function spawnFireball() {
   const [dx, dy] = directionFromFacing(player.facing);
-  if (!dx && !dy) return;
+  if (!dx && !dy) return false;
   fireball.active = true;
   fireball.x = player.x;
   fireball.y = player.y;
   fireball.vx = dx;
   fireball.vy = dy;
+  fireball.cooldownUntil = gameTime + FIREBALL_COOLDOWN;
+  return true;
+}
+
+function killPlayer(reason = "combat") {
+  if (gameState !== "playing") return;
+  gameState = "lost";
+  fireball.active = false;
+  if (reason === "jump-wall") {
+    triggerImpact(player.x, player.y);
+  }
+  showOverlay("lost");
+}
+
+function attemptJump() {
+  const [dx, dy] = directionFromFacing(player.facing);
+  if (!dx && !dy) return false;
+
+  jump.cooldownUntil = gameTime + JUMP_COOLDOWN;
+  const nx = player.x + dx * JUMP_DISTANCE;
+  const ny = player.y + dy * JUMP_DISTANCE;
+
+  player.x = nx;
+  player.y = ny;
+  if (!canMoveTo(player.x, player.y)) {
+    killPlayer("jump-wall");
+    return true;
+  }
+
+  triggerImpact(player.x, player.y);
+  return true;
 }
 
 function aliveSkeletonsCount() {
@@ -409,37 +624,81 @@ function overlapsAnyAliveSkeleton(nx, ny, radius, ignoreId = null) {
   });
 }
 
-function initializeSkeletons() {
+function findOpenSpawnPosition(cx, cy, radius, ignoreId = null) {
+  const offsets = [
+    [0, 0],
+    [TILE_SIZE * 0.5, 0],
+    [-TILE_SIZE * 0.5, 0],
+    [0, TILE_SIZE * 0.5],
+    [0, -TILE_SIZE * 0.5],
+    [TILE_SIZE * 0.5, TILE_SIZE * 0.5],
+    [-TILE_SIZE * 0.5, TILE_SIZE * 0.5],
+    [TILE_SIZE * 0.5, -TILE_SIZE * 0.5],
+    [-TILE_SIZE * 0.5, -TILE_SIZE * 0.5]
+  ];
+
+  for (const [ox, oy] of offsets) {
+    const x = cx + ox;
+    const y = cy + oy;
+    if (!canCircleMoveTo(x, y, radius)) continue;
+    if (overlapsAnyAliveSkeleton(x, y, radius, ignoreId)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 1.1) continue;
+    return { x, y };
+  }
+
+  return null;
+}
+
+function initializeNests() {
   const runePosition = findTilePosition("R");
 
-  for (const [tx, ty] of SKELETON_SPAWN_TILES) {
+  for (const [tx, ty] of NEST_TILES) {
     const x = (tx + 0.5) * TILE_SIZE;
     const y = (ty + 0.5) * TILE_SIZE;
-
     if (tileAtPixel(x, y) === "#") continue;
-    if (!canCircleMoveTo(x, y, SKELETON_RADIUS)) continue;
-    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 4) continue;
+    if (!canCircleMoveTo(x, y, TILE_SIZE * 0.3)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 5) continue;
     if (runePosition && Math.hypot(x - runePosition.x, y - runePosition.y) < TILE_SIZE * 3) continue;
-    if (overlapsAnyAliveSkeleton(x, y, SKELETON_RADIUS)) continue;
 
-    skeletons.push({
-      id: ++skeletonIdCounter,
+    nests.push({
       x,
       y,
-      radius: SKELETON_RADIUS,
-      facing: "down",
-      state: "alive",
-      nextMoveAt: randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX),
-      deathAge: 0,
-      hitDx: 0,
-      hitDy: 0
+      radius: 12,
+      health: NEST_MAX_HEALTH,
+      destroyed: false,
+      nextSpawnAt: randomInRange(0.8, 1.8)
     });
   }
 }
 
-function setSkeletonKilledStatus() {
-  if (player.won) return;
-  statusEl.textContent = `Skeleton destroyed (${aliveSkeletonsCount()} remaining).`;
+function spawnSkeletonAt(x, y) {
+  const spawnPosition = findOpenSpawnPosition(x, y, SKELETON_RADIUS);
+  if (!spawnPosition) return false;
+
+  skeletons.push({
+    id: ++skeletonIdCounter,
+    x: spawnPosition.x,
+    y: spawnPosition.y,
+    radius: SKELETON_RADIUS,
+    facing: "down",
+    state: "alive",
+    nextMoveAt: gameTime + randomInRange(0.08, 0.22),
+    deathAge: 0,
+    hitDx: 0,
+    hitDy: 0
+  });
+  return true;
+}
+
+function initializeSkeletons() {
+  for (const nest of nests) {
+    spawnSkeletonAt(nest.x, nest.y);
+  }
+}
+
+function unlockRuneIfCleared() {
+  if (runeUnlocked || livingNestsCount() > 0) return;
+  runeUnlocked = true;
 }
 
 function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
@@ -449,7 +708,29 @@ function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
   skeleton.hitDx = hitDx;
   skeleton.hitDy = hitDy;
   triggerImpact(hitX, hitY);
-  setSkeletonKilledStatus();
+}
+
+function resetAbilityCooldowns() {
+  fireball.cooldownUntil = gameTime;
+  jump.cooldownUntil = gameTime;
+}
+
+function destroyNest(nest, hitX, hitY) {
+  nest.destroyed = true;
+  nest.health = 0;
+  triggerImpact(hitX, hitY);
+  player.health = clamp(player.health + NEST_HEAL_AMOUNT, 0, player.maxHealth);
+  resetAbilityCooldowns();
+  unlockRuneIfCleared();
+}
+
+function damageNest(nest, hitX, hitY) {
+  if (nest.destroyed) return;
+  nest.health -= 1;
+  triggerImpact(hitX, hitY);
+  if (nest.health <= 0) {
+    destroyNest(nest, hitX, hitY);
+  }
 }
 
 function updateFireball(dt) {
@@ -481,6 +762,18 @@ function updateFireball(dt) {
       return;
     }
 
+    const hitNest = nests.find((nest) => {
+      if (nest.destroyed) return false;
+      const minDistance = fireball.radius + nest.radius;
+      return Math.hypot(nx - nest.x, ny - nest.y) < minDistance;
+    });
+
+    if (hitNest) {
+      damageNest(hitNest, nx, ny);
+      fireball.active = false;
+      return;
+    }
+
     fireball.x = nx;
     fireball.y = ny;
   }
@@ -494,14 +787,53 @@ function updateImpact(dt) {
   }
 }
 
-function updateSkeletons(dt) {
-  const directions = [
+function chooseSkeletonDirection(skeleton) {
+  const dx = player.x - skeleton.x;
+  const dy = player.y - skeleton.y;
+  const dist = Math.hypot(dx, dy);
+  const directions = [];
+
+  if (dist <= SKELETON_AGGRO_RANGE || Math.random() < 0.75) {
+    if (Math.abs(dx) > Math.abs(dy)) {
+      directions.push(
+        { dx: Math.sign(dx), dy: 0, facing: dx < 0 ? "left" : "right" },
+        { dx: 0, dy: Math.sign(dy), facing: dy < 0 ? "up" : "down" }
+      );
+    } else {
+      directions.push(
+        { dx: 0, dy: Math.sign(dy), facing: dy < 0 ? "up" : "down" },
+        { dx: Math.sign(dx), dy: 0, facing: dx < 0 ? "left" : "right" }
+      );
+    }
+  }
+
+  const randomDirections = [
     { dx: 0, dy: -1, facing: "up" },
     { dx: 0, dy: 1, facing: "down" },
     { dx: -1, dy: 0, facing: "left" },
     { dx: 1, dy: 0, facing: "right" }
   ];
 
+  for (let i = randomDirections.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [randomDirections[i], randomDirections[j]] = [randomDirections[j], randomDirections[i]];
+  }
+
+  directions.push(...randomDirections);
+  return directions;
+}
+
+function damagePlayer() {
+  if (gameTime < player.invulnerableUntil || gameState !== "playing") return;
+  player.health = clamp(player.health - PLAYER_CONTACT_DAMAGE, 0, player.maxHealth);
+  player.invulnerableUntil = gameTime + PLAYER_HIT_COOLDOWN;
+
+  if (player.health <= 0) {
+    killPlayer("combat");
+  }
+}
+
+function updateSkeletons(dt) {
   for (const skeleton of skeletons) {
     if (skeleton.state === "dead") continue;
 
@@ -513,28 +845,105 @@ function updateSkeletons(dt) {
       continue;
     }
 
-    if (gameTime < skeleton.nextMoveAt) continue;
-
-    const direction = directions[Math.floor(Math.random() * directions.length)];
-    skeleton.facing = direction.facing;
-
-    const nx = skeleton.x + direction.dx * SKELETON_STEP;
-    const ny = skeleton.y + direction.dy * SKELETON_STEP;
-
-    const canMove =
-      canCircleMoveTo(nx, ny, skeleton.radius) &&
-      !overlapsAnyAliveSkeleton(nx, ny, skeleton.radius, skeleton.id);
-    if (canMove) {
-      skeleton.x = nx;
-      skeleton.y = ny;
+    if (gameTime >= skeleton.nextMoveAt) {
+      const directions = chooseSkeletonDirection(skeleton);
+      for (const direction of directions) {
+        if (!direction.dx && !direction.dy) continue;
+        const nx = skeleton.x + direction.dx * SKELETON_STEP;
+        const ny = skeleton.y + direction.dy * SKELETON_STEP;
+        const canMove =
+          canCircleMoveTo(nx, ny, skeleton.radius) &&
+          !overlapsAnyAliveSkeleton(nx, ny, skeleton.radius, skeleton.id);
+        if (!canMove) continue;
+        skeleton.x = nx;
+        skeleton.y = ny;
+        skeleton.facing = direction.facing;
+        break;
+      }
+      skeleton.nextMoveAt = gameTime + randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX);
     }
 
-    skeleton.nextMoveAt = gameTime + randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX);
+    const minDistance = skeleton.radius + player.radius;
+    if (Math.hypot(skeleton.x - player.x, skeleton.y - player.y) < minDistance) {
+      damagePlayer();
+    }
   }
 }
 
+function updateNests() {
+  if (aliveSkeletonsCount() >= SKELETON_ALIVE_CAP) return;
+
+  for (const nest of nests) {
+    if (nest.destroyed) continue;
+    if (aliveSkeletonsCount() >= SKELETON_ALIVE_CAP) return;
+    if (gameTime < nest.nextSpawnAt) continue;
+
+    spawnSkeletonAt(nest.x, nest.y);
+    nest.nextSpawnAt = gameTime + randomInRange(NEST_SPAWN_INTERVAL_MIN, NEST_SPAWN_INTERVAL_MAX);
+  }
+}
+
+function handleRuneState() {
+  const tile = tileAtPixel(player.x, player.y);
+  if (tile !== "R") return;
+  if (!runeUnlocked) return;
+
+  gameState = "won";
+  fireball.active = false;
+  showOverlay("won");
+}
+
+function initializeGameState() {
+  player.x = TILE_SIZE * 1.5;
+  player.y = TILE_SIZE * 1.5;
+  player.facing = "down";
+  player.health = PLAYER_MAX_HEALTH;
+  player.maxHealth = PLAYER_MAX_HEALTH;
+  player.invulnerableUntil = 0;
+
+  fireball.active = false;
+  fireball.x = 0;
+  fireball.y = 0;
+  fireball.vx = 0;
+  fireball.vy = 0;
+  fireball.cooldownUntil = 0;
+
+  jump.cooldownUntil = 0;
+
+  impactEffect.active = false;
+  impactEffect.x = 0;
+  impactEffect.y = 0;
+  impactEffect.age = 0;
+
+  skeletons.length = 0;
+  nests.length = 0;
+  skeletonIdCounter = 0;
+  gameTime = 0;
+  gameState = "playing";
+  runeUnlocked = false;
+
+  initializeNests();
+  initializeSkeletons();
+  hideOverlay();
+  updateHud();
+}
+
+function resetGame() {
+  keys.clear();
+  keyPressedAt.clear();
+  castQueued = false;
+  jumpQueued = false;
+  inputClock = 0;
+  last = performance.now();
+  initializeGameState();
+}
+
 function update(dt) {
-  if (player.won) return;
+  if (gameState !== "playing") {
+    updateHud();
+    return;
+  }
+
   gameTime += dt;
 
   let mx = 0;
@@ -546,10 +955,8 @@ function update(dt) {
 
   const [dx, dy] = normalize(mx, my);
   const step = PLAYER_SPEED * dt;
-
   const nx = player.x + dx * step;
   const ny = player.y + dy * step;
-
   const prevX = player.x;
   const prevY = player.y;
 
@@ -561,20 +968,52 @@ function update(dt) {
     player.facing = facing;
   }
 
-  if (castQueued && !fireball.active) {
+  if (jumpQueued && canJump()) {
+    attemptJump();
+  } else if (castQueued && canCastFireball()) {
     spawnFireball();
   }
   castQueued = false;
+  jumpQueued = false;
 
+  if (gameState !== "playing") {
+    updateHud();
+    return;
+  }
+
+  updateNests();
   updateSkeletons(dt);
   updateFireball(dt);
   updateImpact(dt);
+  unlockRuneIfCleared();
+  handleRuneState();
+  updateHud();
+}
 
-  const tile = tileAtPixel(player.x, player.y);
-  if (tile === "R") {
-    player.won = true;
-    statusEl.textContent = "Rune recovered. Dungeon cleared.";
-  }
+function drawNest(nest, camX, camY) {
+  const drawX = Math.round(nest.x - TILE_SIZE / 2 - camX);
+  const drawY = Math.round(nest.y - TILE_SIZE / 2 - camY);
+  const pulse = 0.78 + Math.sin(performance.now() / 180) * 0.08;
+
+  ctx.save();
+  ctx.translate(drawX + TILE_SIZE / 2, drawY + TILE_SIZE / 2);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = nest.destroyed ? "rgba(90, 100, 110, 0.35)" : "rgba(207, 228, 235, 0.9)";
+  ctx.beginPath();
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = nest.destroyed ? "rgba(45, 52, 57, 0.7)" : "rgba(116, 56, 38, 0.95)";
+  ctx.beginPath();
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = nest.destroyed ? "rgba(120, 120, 120, 0.5)" : "rgba(255, 240, 220, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-4, -6);
+  ctx.lineTo(5, -1);
+  ctx.lineTo(-3, 6);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawWorld(sprites) {
@@ -595,10 +1034,23 @@ function drawWorld(sprites) {
       } else {
         ctx.drawImage(sprites.floor, sx, sy, TILE_SIZE, TILE_SIZE);
         if (ch === "R") {
-          ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+          if (runeUnlocked) {
+            ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+          } else {
+            ctx.save();
+            ctx.globalAlpha = 0.35;
+            ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = "rgba(18, 43, 54, 0.55)";
+            ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+            ctx.restore();
+          }
         }
       }
     }
+  }
+
+  for (const nest of nests) {
+    drawNest(nest, camX, camY);
   }
 
   for (const skeleton of skeletons) {
@@ -666,6 +1118,10 @@ function drawWorld(sprites) {
     );
   }
 
+  ctx.save();
+  if (gameTime < player.invulnerableUntil && Math.floor(performance.now() / 90) % 2 === 0) {
+    ctx.globalAlpha = 0.55;
+  }
   ctx.drawImage(
     sprites.wizard[player.facing],
     Math.round(player.x - TILE_SIZE / 2 - camX),
@@ -673,15 +1129,20 @@ function drawWorld(sprites) {
     TILE_SIZE,
     TILE_SIZE
   );
+  ctx.restore();
 }
 
-let last = performance.now();
+function hydrateHudAssets() {
+  document.querySelector('[data-ability="fireball"] .ability-icon').src = uiManifest.fireball;
+  document.querySelector('[data-ability="jump"] .ability-icon').src = uiManifest.jump;
+  runeIconEl.src = "./assets/sprites/objective.svg";
+}
 
 async function start() {
   try {
     const sprites = await loadSprites();
-    initializeSkeletons();
-    statusEl.textContent = "Find the glowing rune.";
+    hydrateHudAssets();
+    initializeGameState();
 
     function frame(now) {
       const dt = Math.min((now - last) / 1000, 1 / 20);
@@ -693,7 +1154,10 @@ async function start() {
 
     requestAnimationFrame(frame);
   } catch (error) {
-    statusEl.textContent = error.message;
+    overlayEl.hidden = false;
+    overlayTitleEl.textContent = "Load Error";
+    overlaySubtitleEl.textContent = error.message;
+    restartButtonEl.hidden = true;
     console.error(error);
   }
 }
