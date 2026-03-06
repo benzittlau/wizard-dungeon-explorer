@@ -8,6 +8,7 @@
   "wall": "./assets/sprites/wall.svg",
   "floor": "./assets/sprites/floor.svg",
   "objective": "./assets/sprites/objective.svg",
+  "skeleton": "./assets/sprites/skeleton.svg",
   "fireball": [
     "./assets/sprites/fireball-1.svg",
     "./assets/sprites/fireball-2.svg",
