@@ -2,6 +2,10 @@ const TILE_SIZE = 32;
 const MAP_WIDTH = 30;
 const MAP_HEIGHT = 20;
 const PLAYER_SPEED = 140;
+const FIREBALL_SPEED = 260;
+const FIREBALL_RADIUS = 4;
+const FIREBALL_STEP_PX = 2;
+const IMPACT_DURATION = 0.24;
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -12,9 +16,17 @@ const statusEl = document.getElementById("status");
 const keys = new Set();
 let inputClock = 0;
 const keyPressedAt = new Map();
+let castQueued = false;
 
 window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (!e.repeat) {
+      castQueued = true;
+    }
+    return;
+  }
   if (["w", "a", "s", "d"].includes(key)) {
     e.preventDefault();
     if (!keys.has(key)) {
@@ -24,6 +36,9 @@ window.addEventListener("keydown", (e) => {
   }
 });
 window.addEventListener("keyup", (e) => {
+  if (e.code === "Space") {
+    return;
+  }
   const key = e.key.toLowerCase();
   keys.delete(key);
   keyPressedAt.delete(key);
@@ -63,6 +78,22 @@ const player = {
   won: false
 };
 
+const fireball = {
+  active: false,
+  x: 0,
+  y: 0,
+  vx: 0,
+  vy: 0,
+  radius: FIREBALL_RADIUS
+};
+
+const impactEffect = {
+  active: false,
+  x: 0,
+  y: 0,
+  age: 0
+};
+
 function tileAtPixel(px, py) {
   const tx = Math.floor(px / TILE_SIZE);
   const ty = Math.floor(py / TILE_SIZE);
@@ -78,6 +109,15 @@ function isBlocked(px, py) {
 
 function canMoveTo(nx, ny) {
   const r = player.radius;
+  return (
+    !isBlocked(nx - r, ny - r) &&
+    !isBlocked(nx + r, ny - r) &&
+    !isBlocked(nx - r, ny + r) &&
+    !isBlocked(nx + r, ny + r)
+  );
+}
+
+function canCircleMoveTo(nx, ny, r) {
   return (
     !isBlocked(nx - r, ny - r) &&
     !isBlocked(nx + r, ny - r) &&
@@ -127,18 +167,59 @@ function normalizeWizardManifest(wizardManifest) {
   };
 }
 
+function normalizeAnimationManifest(entry) {
+  if (typeof entry === "string") {
+    return [entry];
+  }
+  if (Array.isArray(entry)) {
+    return entry.filter((item) => typeof item === "string" && item.length > 0);
+  }
+  if (entry && typeof entry === "object") {
+    if (Array.isArray(entry.frames)) {
+      return entry.frames.filter((item) => typeof item === "string" && item.length > 0);
+    }
+    if (typeof entry.sprite === "string") {
+      return [entry.sprite];
+    }
+  }
+  return [];
+}
+
 async function loadSprites() {
   const manifest = await loadManifest();
   const wizardManifest = normalizeWizardManifest(manifest.wizard);
-  const [wizardUp, wizardDown, wizardLeft, wizardRight, wall, floor, rune] = await Promise.all([
+  const fireballFramesManifest = normalizeAnimationManifest(manifest.fireball);
+  const impactFramesManifest = normalizeAnimationManifest(manifest.fireballImpact);
+  const fireballFramePaths =
+    fireballFramesManifest.length > 0
+      ? fireballFramesManifest
+      : [
+          "./assets/sprites/fireball-1.svg",
+          "./assets/sprites/fireball-2.svg",
+          "./assets/sprites/fireball-3.svg"
+        ];
+  const impactFramePaths =
+    impactFramesManifest.length > 0
+      ? impactFramesManifest
+      : [
+          "./assets/sprites/fireball-impact-1.svg",
+          "./assets/sprites/fireball-impact-2.svg",
+          "./assets/sprites/fireball-impact-3.svg"
+        ];
+
+  const [wizardUp, wizardDown, wizardLeft, wizardRight, wall, floor, rune, fireballFrames, impactFrames] =
+    await Promise.all([
     loadImage(wizardManifest.up),
     loadImage(wizardManifest.down),
     loadImage(wizardManifest.left),
     loadImage(wizardManifest.right),
     loadImage(manifest.wall),
     loadImage(manifest.floor),
-    loadImage(manifest.objective)
+    loadImage(manifest.objective),
+    Promise.all(fireballFramePaths.map((src) => loadImage(src))),
+    Promise.all(impactFramePaths.map((src) => loadImage(src)))
   ]);
+
   return {
     wizard: {
       up: wizardUp,
@@ -148,7 +229,9 @@ async function loadSprites() {
     },
     wall,
     floor,
-    rune
+    rune,
+    fireballFrames,
+    impactFrames
   };
 }
 
@@ -197,6 +280,68 @@ function facingFromMovement(dx, dy) {
   return horizontal || vertical;
 }
 
+function directionFromFacing(facing) {
+  switch (facing) {
+    case "up":
+      return [0, -1];
+    case "down":
+      return [0, 1];
+    case "left":
+      return [-1, 0];
+    case "right":
+      return [1, 0];
+    default:
+      return [0, 0];
+  }
+}
+
+function triggerImpact(x, y) {
+  impactEffect.active = true;
+  impactEffect.x = x;
+  impactEffect.y = y;
+  impactEffect.age = 0;
+}
+
+function spawnFireball() {
+  const [dx, dy] = directionFromFacing(player.facing);
+  if (!dx && !dy) return;
+  fireball.active = true;
+  fireball.x = player.x;
+  fireball.y = player.y;
+  fireball.vx = dx;
+  fireball.vy = dy;
+}
+
+function updateFireball(dt) {
+  if (!fireball.active) return;
+
+  const distance = FIREBALL_SPEED * dt;
+  const steps = Math.max(1, Math.ceil(distance / FIREBALL_STEP_PX));
+  const stepSize = distance / steps;
+
+  for (let i = 0; i < steps; i += 1) {
+    const nx = fireball.x + fireball.vx * stepSize;
+    const ny = fireball.y + fireball.vy * stepSize;
+
+    if (!canCircleMoveTo(nx, ny, fireball.radius)) {
+      triggerImpact(nx, ny);
+      fireball.active = false;
+      return;
+    }
+
+    fireball.x = nx;
+    fireball.y = ny;
+  }
+}
+
+function updateImpact(dt) {
+  if (!impactEffect.active) return;
+  impactEffect.age += dt;
+  if (impactEffect.age >= IMPACT_DURATION) {
+    impactEffect.active = false;
+  }
+}
+
 function update(dt) {
   if (player.won) return;
 
@@ -223,6 +368,14 @@ function update(dt) {
   if (facing) {
     player.facing = facing;
   }
+
+  if (castQueued && !fireball.active) {
+    spawnFireball();
+  }
+  castQueued = false;
+
+  updateFireball(dt);
+  updateImpact(dt);
 
   const tile = tileAtPixel(player.x, player.y);
   if (tile === "R") {
@@ -253,6 +406,33 @@ function drawWorld(sprites) {
         }
       }
     }
+  }
+
+  if (impactEffect.active && sprites.impactFrames.length > 0) {
+    const frameIndex = Math.min(
+      sprites.impactFrames.length - 1,
+      Math.floor((impactEffect.age / IMPACT_DURATION) * sprites.impactFrames.length)
+    );
+    const impactSprite = sprites.impactFrames[frameIndex];
+    ctx.drawImage(
+      impactSprite,
+      Math.round(impactEffect.x - TILE_SIZE / 2 - camX),
+      Math.round(impactEffect.y - TILE_SIZE / 2 - camY),
+      TILE_SIZE,
+      TILE_SIZE
+    );
+  }
+
+  if (fireball.active && sprites.fireballFrames.length > 0) {
+    const pulseFrame = Math.floor(performance.now() / 70) % sprites.fireballFrames.length;
+    const fireballSprite = sprites.fireballFrames[pulseFrame];
+    ctx.drawImage(
+      fireballSprite,
+      Math.round(fireball.x - TILE_SIZE / 2 - camX),
+      Math.round(fireball.y - TILE_SIZE / 2 - camY),
+      TILE_SIZE,
+      TILE_SIZE
+    );
   }
 
   ctx.drawImage(
