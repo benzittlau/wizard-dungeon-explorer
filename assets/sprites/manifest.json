@@ -8,7 +8,12 @@
   "wall": "./assets/sprites/wall.svg",
   "floor": "./assets/sprites/floor.svg",
   "objective": "./assets/sprites/objective.svg",
-  "skeleton": "./assets/sprites/skeleton.svg",
+  "skeleton": {
+    "up": "./assets/sprites/skeleton-up.svg",
+    "down": "./assets/sprites/skeleton-down.svg",
+    "left": "./assets/sprites/skeleton-left.svg",
+    "right": "./assets/sprites/skeleton-right.svg"
+  },
   "fireball": [
     "./assets/sprites/fireball-1.svg",
     "./assets/sprites/fireball-2.svg",

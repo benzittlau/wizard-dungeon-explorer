@@ -14,14 +14,26 @@ const SKELETON_DEATH_DURATION = 0.45;
 const SKELETON_HIT_FLASH_DURATION = 0.15;
 
 const SKELETON_SPAWN_TILES = [
+  [3, 1],
   [6, 2],
+  [10, 1],
+  [15, 3],
+  [21, 1],
   [25, 2],
+  [2, 7],
   [4, 9],
+  [10, 8],
   [18, 7],
+  [24, 9],
   [26, 12],
+  [6, 13],
+  [16, 11],
   [8, 16],
+  [13, 17],
   [20, 17],
-  [27, 18]
+  [27, 18],
+  [28, 5],
+  [28, 15]
 ];
 
 const canvas = document.getElementById("game");
@@ -182,27 +194,27 @@ function loadImage(src) {
   });
 }
 
-function normalizeWizardManifest(wizardManifest) {
-  if (typeof wizardManifest === "string") {
+function normalizeDirectionalManifest(entry, label) {
+  if (typeof entry === "string") {
     return {
-      up: wizardManifest,
-      down: wizardManifest,
-      left: wizardManifest,
-      right: wizardManifest
+      up: entry,
+      down: entry,
+      left: entry,
+      right: entry
     };
   }
 
   const fallback =
-    wizardManifest?.down || wizardManifest?.up || wizardManifest?.left || wizardManifest?.right;
+    entry?.down || entry?.up || entry?.left || entry?.right;
   if (!fallback) {
-    throw new Error("Manifest is missing wizard sprite paths.");
+    throw new Error(`Manifest is missing ${label} sprite paths.`);
   }
 
   return {
-    up: wizardManifest.up || fallback,
-    down: wizardManifest.down || fallback,
-    left: wizardManifest.left || fallback,
-    right: wizardManifest.right || fallback
+    up: entry.up || fallback,
+    down: entry.down || fallback,
+    left: entry.left || fallback,
+    right: entry.right || fallback
   };
 }
 
@@ -226,13 +238,18 @@ function normalizeAnimationManifest(entry) {
 
 async function loadSprites() {
   const manifest = await loadManifest();
-  const wizardManifest = normalizeWizardManifest(manifest.wizard);
+  const wizardManifest = normalizeDirectionalManifest(manifest.wizard, "wizard");
   const fireballFramesManifest = normalizeAnimationManifest(manifest.fireball);
   const impactFramesManifest = normalizeAnimationManifest(manifest.fireballImpact);
-  const skeletonSpritePath =
-    typeof manifest.skeleton === "string" && manifest.skeleton.length > 0
-      ? manifest.skeleton
-      : "./assets/sprites/skeleton.svg";
+  const skeletonManifest = normalizeDirectionalManifest(
+    manifest.skeleton || {
+      up: "./assets/sprites/skeleton-up.svg",
+      down: "./assets/sprites/skeleton-down.svg",
+      left: "./assets/sprites/skeleton-left.svg",
+      right: "./assets/sprites/skeleton-right.svg"
+    },
+    "skeleton"
+  );
   const fireballFramePaths =
     fireballFramesManifest.length > 0
       ? fireballFramesManifest
@@ -250,7 +267,21 @@ async function loadSprites() {
           "./assets/sprites/fireball-impact-3.svg"
         ];
 
-  const [wizardUp, wizardDown, wizardLeft, wizardRight, wall, floor, rune, skeleton, fireballFrames, impactFrames] =
+  const [
+    wizardUp,
+    wizardDown,
+    wizardLeft,
+    wizardRight,
+    wall,
+    floor,
+    rune,
+    skeletonUp,
+    skeletonDown,
+    skeletonLeft,
+    skeletonRight,
+    fireballFrames,
+    impactFrames
+  ] =
     await Promise.all([
     loadImage(wizardManifest.up),
     loadImage(wizardManifest.down),
@@ -259,7 +290,10 @@ async function loadSprites() {
     loadImage(manifest.wall),
     loadImage(manifest.floor),
     loadImage(manifest.objective),
-    loadImage(skeletonSpritePath),
+    loadImage(skeletonManifest.up),
+    loadImage(skeletonManifest.down),
+    loadImage(skeletonManifest.left),
+    loadImage(skeletonManifest.right),
     Promise.all(fireballFramePaths.map((src) => loadImage(src))),
     Promise.all(impactFramePaths.map((src) => loadImage(src)))
   ]);
@@ -274,7 +308,12 @@ async function loadSprites() {
     wall,
     floor,
     rune,
-    skeleton,
+    skeleton: {
+      up: skeletonUp,
+      down: skeletonDown,
+      left: skeletonLeft,
+      right: skeletonRight
+    },
     fireballFrames,
     impactFrames
   };
@@ -588,7 +627,7 @@ function drawWorld(sprites) {
     ctx.globalAlpha = alpha;
     ctx.translate(centerX, centerY);
     ctx.scale(scale, scale);
-    ctx.drawImage(sprites.skeleton, -TILE_SIZE / 2, -TILE_SIZE / 2, TILE_SIZE, TILE_SIZE);
+    ctx.drawImage(sprites.skeleton[skeleton.facing], -TILE_SIZE / 2, -TILE_SIZE / 2, TILE_SIZE, TILE_SIZE);
 
     if (skeleton.state === "dying" && skeleton.deathAge < SKELETON_HIT_FLASH_DURATION) {
       const flashStrength = 1 - skeleton.deathAge / SKELETON_HIT_FLASH_DURATION;
