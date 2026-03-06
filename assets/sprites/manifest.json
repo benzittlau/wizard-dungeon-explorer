@@ -1,5 +1,10 @@
 {
-  "wizard": "./assets/sprites/wizard.svg",
+  "wizard": {
+    "up": "./assets/sprites/wizard-up.svg",
+    "down": "./assets/sprites/wizard-down.svg",
+    "left": "./assets/sprites/wizard-left.svg",
+    "right": "./assets/sprites/wizard-right.svg"
+  },
   "wall": "./assets/sprites/wall.svg",
   "floor": "./assets/sprites/floor.svg",
   "objective": "./assets/sprites/objective.svg"

@@ -10,14 +10,24 @@ ctx.imageSmoothingEnabled = false;
 const statusEl = document.getElementById("status");
 
 const keys = new Set();
+let inputClock = 0;
+const keyPressedAt = new Map();
+
 window.addEventListener("keydown", (e) => {
   const key = e.key.toLowerCase();
   if (["w", "a", "s", "d"].includes(key)) {
     e.preventDefault();
+    if (!keys.has(key)) {
+      keyPressedAt.set(key, ++inputClock);
+    }
     keys.add(key);
   }
 });
-window.addEventListener("keyup", (e) => keys.delete(e.key.toLowerCase()));
+window.addEventListener("keyup", (e) => {
+  const key = e.key.toLowerCase();
+  keys.delete(key);
+  keyPressedAt.delete(key);
+});
 
 const map = [
   "##############################",
@@ -49,6 +59,7 @@ const player = {
   x: TILE_SIZE * 1.5,
   y: TILE_SIZE * 1.5,
   radius: 10,
+  facing: "down",
   won: false
 };
 
@@ -92,21 +103,98 @@ function loadImage(src) {
   });
 }
 
+function normalizeWizardManifest(wizardManifest) {
+  if (typeof wizardManifest === "string") {
+    return {
+      up: wizardManifest,
+      down: wizardManifest,
+      left: wizardManifest,
+      right: wizardManifest
+    };
+  }
+
+  const fallback =
+    wizardManifest?.down || wizardManifest?.up || wizardManifest?.left || wizardManifest?.right;
+  if (!fallback) {
+    throw new Error("Manifest is missing wizard sprite paths.");
+  }
+
+  return {
+    up: wizardManifest.up || fallback,
+    down: wizardManifest.down || fallback,
+    left: wizardManifest.left || fallback,
+    right: wizardManifest.right || fallback
+  };
+}
+
 async function loadSprites() {
   const manifest = await loadManifest();
-  const [wizard, wall, floor, rune] = await Promise.all([
-    loadImage(manifest.wizard),
+  const wizardManifest = normalizeWizardManifest(manifest.wizard);
+  const [wizardUp, wizardDown, wizardLeft, wizardRight, wall, floor, rune] = await Promise.all([
+    loadImage(wizardManifest.up),
+    loadImage(wizardManifest.down),
+    loadImage(wizardManifest.left),
+    loadImage(wizardManifest.right),
     loadImage(manifest.wall),
     loadImage(manifest.floor),
     loadImage(manifest.objective)
   ]);
-  return { wizard, wall, floor, rune };
+  return {
+    wizard: {
+      up: wizardUp,
+      down: wizardDown,
+      left: wizardLeft,
+      right: wizardRight
+    },
+    wall,
+    floor,
+    rune
+  };
 }
 
 function normalize(vx, vy) {
   const len = Math.hypot(vx, vy);
   if (!len) return [0, 0];
   return [vx / len, vy / len];
+}
+
+function currentFacing() {
+  let newestKey = null;
+  let newestTime = -1;
+
+  for (const key of keys) {
+    const pressedAt = keyPressedAt.get(key) || 0;
+    if (pressedAt > newestTime) {
+      newestKey = key;
+      newestTime = pressedAt;
+    }
+  }
+
+  switch (newestKey) {
+    case "w":
+      return "up";
+    case "s":
+      return "down";
+    case "a":
+      return "left";
+    case "d":
+      return "right";
+    default:
+      return null;
+  }
+}
+
+function facingFromMovement(dx, dy) {
+  const horizontal = dx === 0 ? null : dx < 0 ? "left" : "right";
+  const vertical = dy === 0 ? null : dy < 0 ? "up" : "down";
+
+  if (horizontal && vertical) {
+    const horizontalTime = Math.max(keyPressedAt.get("a") || 0, keyPressedAt.get("d") || 0);
+    const verticalTime = Math.max(keyPressedAt.get("w") || 0, keyPressedAt.get("s") || 0);
+    return horizontalTime > verticalTime ? horizontal : vertical;
+  }
+
+  return horizontal || vertical;
 }
 
 function update(dt) {
@@ -125,8 +213,16 @@ function update(dt) {
   const nx = player.x + dx * step;
   const ny = player.y + dy * step;
 
+  const prevX = player.x;
+  const prevY = player.y;
+
   if (canMoveTo(nx, player.y)) player.x = nx;
   if (canMoveTo(player.x, ny)) player.y = ny;
+
+  const facing = facingFromMovement(player.x - prevX, player.y - prevY) || currentFacing();
+  if (facing) {
+    player.facing = facing;
+  }
 
   const tile = tileAtPixel(player.x, player.y);
   if (tile === "R") {
@@ -160,7 +256,7 @@ function drawWorld(sprites) {
   }
 
   ctx.drawImage(
-    sprites.wizard,
+    sprites.wizard[player.facing],
     Math.round(player.x - TILE_SIZE / 2 - camX),
     Math.round(player.y - TILE_SIZE / 2 - camY),
     TILE_SIZE,
