@@ -36,16 +36,28 @@
       }
 
       .hud {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        gap: 8px;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr);
+        gap: 6px;
         margin-bottom: 10px;
         font-size: 14px;
       }
 
+      .hud-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+
       .hud strong {
         color: var(--accent);
+      }
+
+      #stats {
+        color: #c3d5ff;
+        font-size: 13px;
       }
 
       canvas {
@@ -68,11 +80,14 @@
   <body>
     <div class="game-shell">
       <div class="hud">
-        <div><strong>Wizard Dungeon Explorer</strong></div>
-        <div id="status">Find the glowing rune.</div>
+        <div class="hud-row">
+          <div><strong>Wizard Dungeon Explorer</strong></div>
+          <div id="status">Destroy the bone nests to unlock the rune.</div>
+        </div>
+        <div id="stats">Health 5/5 | Nests 5 | Rune Locked | Fireball Ready</div>
       </div>
       <canvas id="game" width="640" height="480" aria-label="game canvas"></canvas>
-      <div class="hint">Controls: W A S D + Space</div>
+      <div class="hint">Controls: W A S D + Space. Press R after winning or losing.</div>
     </div>
 
     <script type="module" src="./main.js"></script>

@@ -2,38 +2,33 @@ const TILE_SIZE = 32;
 const MAP_WIDTH = 30;
 const MAP_HEIGHT = 20;
 const PLAYER_SPEED = 140;
+const PLAYER_MAX_HEALTH = 5;
+const PLAYER_HIT_COOLDOWN = 0.9;
+const PLAYER_CONTACT_DAMAGE = 1;
 const FIREBALL_SPEED = 260;
 const FIREBALL_RADIUS = 4;
 const FIREBALL_STEP_PX = 2;
+const FIREBALL_COOLDOWN = 0.55;
 const IMPACT_DURATION = 0.24;
 const SKELETON_RADIUS = 10;
-const SKELETON_MOVE_INTERVAL_MIN = 0.9;
-const SKELETON_MOVE_INTERVAL_MAX = 1.2;
 const SKELETON_STEP = TILE_SIZE * 0.5;
 const SKELETON_DEATH_DURATION = 0.45;
 const SKELETON_HIT_FLASH_DURATION = 0.15;
+const SKELETON_MOVE_INTERVAL_MIN = 0.22;
+const SKELETON_MOVE_INTERVAL_MAX = 0.38;
+const SKELETON_AGGRO_RANGE = TILE_SIZE * 6;
+const SKELETON_ALIVE_CAP = 10;
+const NEST_MAX_HEALTH = 2;
+const NEST_HEAL_AMOUNT = 1;
+const NEST_SPAWN_INTERVAL_MIN = 2.4;
+const NEST_SPAWN_INTERVAL_MAX = 3.6;
 
-const SKELETON_SPAWN_TILES = [
-  [3, 1],
-  [6, 2],
+const NEST_TILES = [
   [10, 1],
   [15, 3],
-  [21, 1],
-  [25, 2],
-  [2, 7],
-  [4, 9],
-  [10, 8],
-  [18, 7],
   [24, 9],
-  [26, 12],
-  [6, 13],
   [16, 11],
-  [8, 16],
-  [13, 17],
-  [20, 17],
-  [27, 18],
-  [28, 5],
-  [28, 15]
+  [20, 17]
 ];
 
 const canvas = document.getElementById("game");
@@ -41,6 +36,7 @@ const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
 const statusEl = document.getElementById("status");
+const statsEl = document.getElementById("stats");
 
 const keys = new Set();
 let inputClock = 0;
@@ -56,6 +52,14 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
+
+  if (e.key === "r" || e.key === "R") {
+    if (gameState === "won" || gameState === "lost") {
+      window.location.reload();
+    }
+    return;
+  }
+
   if (["w", "a", "s", "d"].includes(key)) {
     e.preventDefault();
     if (!keys.has(key)) {
@@ -64,6 +68,7 @@ window.addEventListener("keydown", (e) => {
     keys.add(key);
   }
 });
+
 window.addEventListener("keyup", (e) => {
   if (e.code === "Space") {
     return;
@@ -104,7 +109,9 @@ const player = {
   y: TILE_SIZE * 1.5,
   radius: 10,
   facing: "down",
-  won: false
+  health: PLAYER_MAX_HEALTH,
+  maxHealth: PLAYER_MAX_HEALTH,
+  invulnerableUntil: 0
 };
 
 const fireball = {
@@ -113,7 +120,8 @@ const fireball = {
   y: 0,
   vx: 0,
   vy: 0,
-  radius: FIREBALL_RADIUS
+  radius: FIREBALL_RADIUS,
+  cooldownUntil: 0
 };
 
 const impactEffect = {
@@ -124,8 +132,12 @@ const impactEffect = {
 };
 
 const skeletons = [];
+const nests = [];
 let skeletonIdCounter = 0;
 let gameTime = 0;
+let gameState = "playing";
+let runeUnlocked = false;
+let statusMessage = "Destroy the bone nests to unlock the rune.";
 
 function tileAtPixel(px, py) {
   const tx = Math.floor(px / TILE_SIZE);
@@ -177,6 +189,10 @@ function randomInRange(min, max) {
   return min + Math.random() * (max - min);
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 async function loadManifest() {
   const response = await fetch("./assets/sprites/manifest.json", { cache: "no-cache" });
   if (!response.ok) {
@@ -204,8 +220,7 @@ function normalizeDirectionalManifest(entry, label) {
     };
   }
 
-  const fallback =
-    entry?.down || entry?.up || entry?.left || entry?.right;
+  const fallback = entry?.down || entry?.up || entry?.left || entry?.right;
   if (!fallback) {
     throw new Error(`Manifest is missing ${label} sprite paths.`);
   }
@@ -281,8 +296,7 @@ async function loadSprites() {
     skeletonRight,
     fireballFrames,
     impactFrames
-  ] =
-    await Promise.all([
+  ] = await Promise.all([
     loadImage(wizardManifest.up),
     loadImage(wizardManifest.down),
     loadImage(wizardManifest.left),
@@ -386,14 +400,33 @@ function triggerImpact(x, y) {
   impactEffect.age = 0;
 }
 
+function setStatus(message) {
+  statusMessage = message;
+}
+
+function updateHud() {
+  const livingNests = nests.filter((nest) => !nest.destroyed).length;
+  const cooldownRemaining = Math.max(0, fireball.cooldownUntil - gameTime);
+  const fireballReady = !fireball.active && cooldownRemaining <= 0;
+  const runeState = runeUnlocked ? "Unlocked" : "Locked";
+  statusEl.textContent = statusMessage;
+  statsEl.textContent = `Health ${player.health}/${player.maxHealth} | Nests ${livingNests} | Rune ${runeState} | Fireball ${fireballReady ? "Ready" : `${cooldownRemaining.toFixed(1)}s`}`;
+}
+
+function canCastFireball() {
+  return gameState === "playing" && !fireball.active && gameTime >= fireball.cooldownUntil;
+}
+
 function spawnFireball() {
   const [dx, dy] = directionFromFacing(player.facing);
-  if (!dx && !dy) return;
+  if (!dx && !dy) return false;
   fireball.active = true;
   fireball.x = player.x;
   fireball.y = player.y;
   fireball.vx = dx;
   fireball.vy = dy;
+  fireball.cooldownUntil = gameTime + FIREBALL_COOLDOWN;
+  return true;
 }
 
 function aliveSkeletonsCount() {
@@ -409,37 +442,95 @@ function overlapsAnyAliveSkeleton(nx, ny, radius, ignoreId = null) {
   });
 }
 
-function initializeSkeletons() {
+function findOpenSpawnPosition(cx, cy, radius, ignoreId = null) {
+  const offsets = [
+    [0, 0],
+    [TILE_SIZE * 0.5, 0],
+    [-TILE_SIZE * 0.5, 0],
+    [0, TILE_SIZE * 0.5],
+    [0, -TILE_SIZE * 0.5],
+    [TILE_SIZE * 0.5, TILE_SIZE * 0.5],
+    [-TILE_SIZE * 0.5, TILE_SIZE * 0.5],
+    [TILE_SIZE * 0.5, -TILE_SIZE * 0.5],
+    [-TILE_SIZE * 0.5, -TILE_SIZE * 0.5]
+  ];
+
+  for (const [ox, oy] of offsets) {
+    const x = cx + ox;
+    const y = cy + oy;
+    if (!canCircleMoveTo(x, y, radius)) continue;
+    if (overlapsAnyAliveSkeleton(x, y, radius, ignoreId)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 1.1) continue;
+    return { x, y };
+  }
+
+  return null;
+}
+
+function initializeNests() {
   const runePosition = findTilePosition("R");
 
-  for (const [tx, ty] of SKELETON_SPAWN_TILES) {
+  for (const [tx, ty] of NEST_TILES) {
     const x = (tx + 0.5) * TILE_SIZE;
     const y = (ty + 0.5) * TILE_SIZE;
-
     if (tileAtPixel(x, y) === "#") continue;
-    if (!canCircleMoveTo(x, y, SKELETON_RADIUS)) continue;
-    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 4) continue;
+    if (!canCircleMoveTo(x, y, TILE_SIZE * 0.3)) continue;
+    if (Math.hypot(x - player.x, y - player.y) < TILE_SIZE * 5) continue;
     if (runePosition && Math.hypot(x - runePosition.x, y - runePosition.y) < TILE_SIZE * 3) continue;
-    if (overlapsAnyAliveSkeleton(x, y, SKELETON_RADIUS)) continue;
 
-    skeletons.push({
-      id: ++skeletonIdCounter,
+    nests.push({
       x,
       y,
-      radius: SKELETON_RADIUS,
-      facing: "down",
-      state: "alive",
-      nextMoveAt: randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX),
-      deathAge: 0,
-      hitDx: 0,
-      hitDy: 0
+      radius: 12,
+      health: NEST_MAX_HEALTH,
+      destroyed: false,
+      nextSpawnAt: randomInRange(0.8, 1.8)
     });
   }
 }
 
+function spawnSkeletonAt(x, y) {
+  const spawnPosition = findOpenSpawnPosition(x, y, SKELETON_RADIUS);
+  if (!spawnPosition) return false;
+
+  skeletons.push({
+    id: ++skeletonIdCounter,
+    x: spawnPosition.x,
+    y: spawnPosition.y,
+    radius: SKELETON_RADIUS,
+    facing: "down",
+    state: "alive",
+    nextMoveAt: gameTime + randomInRange(0.08, 0.22),
+    deathAge: 0,
+    hitDx: 0,
+    hitDy: 0
+  });
+  return true;
+}
+
+function initializeSkeletons() {
+  for (const nest of nests) {
+    spawnSkeletonAt(nest.x, nest.y);
+  }
+}
+
+function livingNestsCount() {
+  return nests.filter((nest) => !nest.destroyed).length;
+}
+
+function unlockRuneIfCleared() {
+  if (runeUnlocked || livingNestsCount() > 0) return;
+  runeUnlocked = true;
+  setStatus("The rune is exposed. Reach it to clear the dungeon.");
+}
+
 function setSkeletonKilledStatus() {
-  if (player.won) return;
-  statusEl.textContent = `Skeleton destroyed (${aliveSkeletonsCount()} remaining).`;
+  if (gameState !== "playing") return;
+  if (!runeUnlocked) {
+    setStatus(`Bone nest hunt underway. ${livingNestsCount()} nests remain.`);
+  } else {
+    setStatus("The rune is exposed. Reach it to clear the dungeon.");
+  }
 }
 
 function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
@@ -450,6 +541,28 @@ function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
   skeleton.hitDy = hitDy;
   triggerImpact(hitX, hitY);
   setSkeletonKilledStatus();
+}
+
+function destroyNest(nest, hitX, hitY) {
+  nest.destroyed = true;
+  nest.health = 0;
+  triggerImpact(hitX, hitY);
+  player.health = clamp(player.health + NEST_HEAL_AMOUNT, 0, player.maxHealth);
+  unlockRuneIfCleared();
+  if (!runeUnlocked) {
+    setStatus(`Nest shattered. ${livingNestsCount()} nests remain.`);
+  }
+}
+
+function damageNest(nest, hitX, hitY) {
+  if (nest.destroyed) return;
+  nest.health -= 1;
+  triggerImpact(hitX, hitY);
+  if (nest.health <= 0) {
+    destroyNest(nest, hitX, hitY);
+    return;
+  }
+  setStatus(`Nest cracked. ${nest.health} hit${nest.health === 1 ? "" : "s"} to go.`);
 }
 
 function updateFireball(dt) {
@@ -481,6 +594,18 @@ function updateFireball(dt) {
       return;
     }
 
+    const hitNest = nests.find((nest) => {
+      if (nest.destroyed) return false;
+      const minDistance = fireball.radius + nest.radius;
+      return Math.hypot(nx - nest.x, ny - nest.y) < minDistance;
+    });
+
+    if (hitNest) {
+      damageNest(hitNest, nx, ny);
+      fireball.active = false;
+      return;
+    }
+
     fireball.x = nx;
     fireball.y = ny;
   }
@@ -494,14 +619,58 @@ function updateImpact(dt) {
   }
 }
 
-function updateSkeletons(dt) {
-  const directions = [
+function chooseSkeletonDirection(skeleton) {
+  const dx = player.x - skeleton.x;
+  const dy = player.y - skeleton.y;
+  const dist = Math.hypot(dx, dy);
+  const directions = [];
+
+  if (dist <= SKELETON_AGGRO_RANGE || Math.random() < 0.75) {
+    if (Math.abs(dx) > Math.abs(dy)) {
+      directions.push(
+        { dx: Math.sign(dx), dy: 0, facing: dx < 0 ? "left" : "right" },
+        { dx: 0, dy: Math.sign(dy), facing: dy < 0 ? "up" : "down" }
+      );
+    } else {
+      directions.push(
+        { dx: 0, dy: Math.sign(dy), facing: dy < 0 ? "up" : "down" },
+        { dx: Math.sign(dx), dy: 0, facing: dx < 0 ? "left" : "right" }
+      );
+    }
+  }
+
+  const randomDirections = [
     { dx: 0, dy: -1, facing: "up" },
     { dx: 0, dy: 1, facing: "down" },
     { dx: -1, dy: 0, facing: "left" },
     { dx: 1, dy: 0, facing: "right" }
   ];
 
+  for (let i = randomDirections.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [randomDirections[i], randomDirections[j]] = [randomDirections[j], randomDirections[i]];
+  }
+
+  directions.push(...randomDirections);
+  return directions;
+}
+
+function damagePlayer() {
+  if (gameTime < player.invulnerableUntil || gameState !== "playing") return;
+  player.health = clamp(player.health - PLAYER_CONTACT_DAMAGE, 0, player.maxHealth);
+  player.invulnerableUntil = gameTime + PLAYER_HIT_COOLDOWN;
+
+  if (player.health <= 0) {
+    gameState = "lost";
+    fireball.active = false;
+    setStatus("The wizard fell. Press R to restart.");
+    return;
+  }
+
+  setStatus("The skeletons closed in. Keep moving.");
+}
+
+function updateSkeletons(dt) {
   for (const skeleton of skeletons) {
     if (skeleton.state === "dead") continue;
 
@@ -513,28 +682,53 @@ function updateSkeletons(dt) {
       continue;
     }
 
-    if (gameTime < skeleton.nextMoveAt) continue;
-
-    const direction = directions[Math.floor(Math.random() * directions.length)];
-    skeleton.facing = direction.facing;
-
-    const nx = skeleton.x + direction.dx * SKELETON_STEP;
-    const ny = skeleton.y + direction.dy * SKELETON_STEP;
-
-    const canMove =
-      canCircleMoveTo(nx, ny, skeleton.radius) &&
-      !overlapsAnyAliveSkeleton(nx, ny, skeleton.radius, skeleton.id);
-    if (canMove) {
-      skeleton.x = nx;
-      skeleton.y = ny;
+    if (gameTime >= skeleton.nextMoveAt) {
+      const directions = chooseSkeletonDirection(skeleton);
+      for (const direction of directions) {
+        if (!direction.dx && !direction.dy) continue;
+        const nx = skeleton.x + direction.dx * SKELETON_STEP;
+        const ny = skeleton.y + direction.dy * SKELETON_STEP;
+        const canMove =
+          canCircleMoveTo(nx, ny, skeleton.radius) &&
+          !overlapsAnyAliveSkeleton(nx, ny, skeleton.radius, skeleton.id);
+        if (!canMove) continue;
+        skeleton.x = nx;
+        skeleton.y = ny;
+        skeleton.facing = direction.facing;
+        break;
+      }
+      skeleton.nextMoveAt = gameTime + randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX);
     }
 
-    skeleton.nextMoveAt = gameTime + randomInRange(SKELETON_MOVE_INTERVAL_MIN, SKELETON_MOVE_INTERVAL_MAX);
+    const minDistance = skeleton.radius + player.radius;
+    if (Math.hypot(skeleton.x - player.x, skeleton.y - player.y) < minDistance) {
+      damagePlayer();
+    }
+  }
+}
+
+function updateNests() {
+  if (aliveSkeletonsCount() >= SKELETON_ALIVE_CAP) return;
+
+  for (const nest of nests) {
+    if (nest.destroyed) continue;
+    if (aliveSkeletonsCount() >= SKELETON_ALIVE_CAP) return;
+    if (gameTime < nest.nextSpawnAt) continue;
+
+    const spawned = spawnSkeletonAt(nest.x, nest.y);
+    nest.nextSpawnAt = gameTime + randomInRange(NEST_SPAWN_INTERVAL_MIN, NEST_SPAWN_INTERVAL_MAX);
+    if (spawned && !runeUnlocked) {
+      setStatus(`Skeletons are pouring out. ${livingNestsCount()} nests remain.`);
+    }
   }
 }
 
 function update(dt) {
-  if (player.won) return;
+  if (gameState !== "playing") {
+    updateHud();
+    return;
+  }
+
   gameTime += dt;
 
   let mx = 0;
@@ -561,20 +755,54 @@ function update(dt) {
     player.facing = facing;
   }
 
-  if (castQueued && !fireball.active) {
+  if (castQueued && canCastFireball()) {
     spawnFireball();
   }
   castQueued = false;
 
+  updateNests();
   updateSkeletons(dt);
   updateFireball(dt);
   updateImpact(dt);
+  unlockRuneIfCleared();
 
   const tile = tileAtPixel(player.x, player.y);
   if (tile === "R") {
-    player.won = true;
-    statusEl.textContent = "Rune recovered. Dungeon cleared.";
+    if (runeUnlocked) {
+      gameState = "won";
+      setStatus("Rune recovered. Dungeon cleared. Press R to play again.");
+    } else {
+      setStatus(`The rune is sealed. ${livingNestsCount()} nests still feed it.`);
+    }
   }
+
+  updateHud();
+}
+
+function drawNest(nest, camX, camY) {
+  const drawX = Math.round(nest.x - TILE_SIZE / 2 - camX);
+  const drawY = Math.round(nest.y - TILE_SIZE / 2 - camY);
+  const pulse = 0.78 + Math.sin(performance.now() / 180) * 0.08;
+
+  ctx.save();
+  ctx.translate(drawX + TILE_SIZE / 2, drawY + TILE_SIZE / 2);
+  ctx.scale(pulse, pulse);
+  ctx.fillStyle = nest.destroyed ? "rgba(90, 100, 110, 0.35)" : "rgba(207, 228, 235, 0.9)";
+  ctx.beginPath();
+  ctx.arc(0, 0, 11, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = nest.destroyed ? "rgba(45, 52, 57, 0.7)" : "rgba(116, 56, 38, 0.95)";
+  ctx.beginPath();
+  ctx.arc(0, 0, 8, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.strokeStyle = nest.destroyed ? "rgba(120, 120, 120, 0.5)" : "rgba(255, 240, 220, 0.8)";
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(-4, -6);
+  ctx.lineTo(5, -1);
+  ctx.lineTo(-3, 6);
+  ctx.stroke();
+  ctx.restore();
 }
 
 function drawWorld(sprites) {
@@ -595,10 +823,23 @@ function drawWorld(sprites) {
       } else {
         ctx.drawImage(sprites.floor, sx, sy, TILE_SIZE, TILE_SIZE);
         if (ch === "R") {
-          ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+          if (runeUnlocked) {
+            ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+          } else {
+            ctx.save();
+            ctx.globalAlpha = 0.45;
+            ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
+            ctx.fillStyle = "rgba(64, 170, 190, 0.35)";
+            ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
+            ctx.restore();
+          }
         }
       }
     }
+  }
+
+  for (const nest of nests) {
+    drawNest(nest, camX, camY);
   }
 
   for (const skeleton of skeletons) {
@@ -666,6 +907,10 @@ function drawWorld(sprites) {
     );
   }
 
+  ctx.save();
+  if (gameTime < player.invulnerableUntil && Math.floor(performance.now() / 90) % 2 === 0) {
+    ctx.globalAlpha = 0.55;
+  }
   ctx.drawImage(
     sprites.wizard[player.facing],
     Math.round(player.x - TILE_SIZE / 2 - camX),
@@ -673,6 +918,7 @@ function drawWorld(sprites) {
     TILE_SIZE,
     TILE_SIZE
   );
+  ctx.restore();
 }
 
 let last = performance.now();
@@ -680,8 +926,9 @@ let last = performance.now();
 async function start() {
   try {
     const sprites = await loadSprites();
+    initializeNests();
     initializeSkeletons();
-    statusEl.textContent = "Find the glowing rune.";
+    updateHud();
 
     function frame(now) {
       const dt = Math.min((now - last) / 1000, 1 / 20);
