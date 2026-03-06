@@ -1,0 +1,10 @@
+{
+  "name": "pixellab-generation-tests",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:assets": "node scripts/generate_assets.mjs",
+    "serve": "python3 -m http.server 8080"
+  }
+}

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wizard Dungeon Explorer</title>
+    <style>
+      :root {
+        --bg: #0f1118;
+        --panel: #1a1f2a;
+        --text: #ecf0ff;
+        --accent: #76e8c5;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: "Courier New", Courier, monospace;
+        background: radial-gradient(circle at 30% 20%, #1a2330 0%, var(--bg) 55%);
+        color: var(--text);
+        min-height: 100svh;
+        display: grid;
+        place-items: center;
+        padding: 16px;
+      }
+
+      .game-shell {
+        width: min(100%, 900px);
+        background: color-mix(in srgb, var(--panel) 85%, black);
+        border: 2px solid #2f3645;
+        border-radius: 12px;
+        padding: 12px;
+      }
+
+      .hud {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 10px;
+        font-size: 14px;
+      }
+
+      .hud strong {
+        color: var(--accent);
+      }
+
+      canvas {
+        width: 100%;
+        height: auto;
+        max-height: min(72svh, 700px);
+        border: 2px solid #3b4458;
+        background: #0a0b11;
+        image-rendering: pixelated;
+        image-rendering: crisp-edges;
+      }
+
+      .hint {
+        margin-top: 10px;
+        font-size: 13px;
+        opacity: 0.9;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="game-shell">
+      <div class="hud">
+        <div><strong>Wizard Dungeon Explorer</strong></div>
+        <div id="status">Find the glowing rune.</div>
+      </div>
+      <canvas id="game" width="640" height="480" aria-label="game canvas"></canvas>
+      <div class="hint">Controls: W A S D</div>
+    </div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
