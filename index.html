@@ -6,10 +6,15 @@
     <title>Wizard Dungeon Explorer</title>
     <style>
       :root {
-        --bg: #0f1118;
-        --panel: #1a1f2a;
-        --text: #ecf0ff;
-        --accent: #76e8c5;
+        --bg-top: #13202c;
+        --bg-bottom: #06070d;
+        --panel: rgba(8, 12, 19, 0.84);
+        --panel-border: rgba(129, 159, 181, 0.35);
+        --text: #edf4ff;
+        --muted: #8ca0b4;
+        --gold: #ffd67e;
+        --teal: #79edd6;
+        --danger: #ff7f7f;
       }
 
       * {
@@ -18,29 +23,35 @@
 
       body {
         margin: 0;
-        font-family: "Courier New", Courier, monospace;
-        background: radial-gradient(circle at 30% 20%, #1a2330 0%, var(--bg) 55%);
-        color: var(--text);
         min-height: 100svh;
         display: grid;
         place-items: center;
         padding: 16px;
+        color: var(--text);
+        font-family: "Trebuchet MS", Verdana, sans-serif;
+        background:
+          radial-gradient(circle at 18% 20%, rgba(72, 127, 154, 0.26), transparent 28%),
+          radial-gradient(circle at 82% 14%, rgba(123, 73, 44, 0.26), transparent 22%),
+          linear-gradient(180deg, var(--bg-top), var(--bg-bottom));
       }
 
       .game-shell {
-        width: min(100%, 900px);
-        background: color-mix(in srgb, var(--panel) 85%, black);
-        border: 2px solid #2f3645;
-        border-radius: 12px;
-        padding: 12px;
+        width: min(100%, 960px);
+        padding: 14px;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0)),
+          rgba(4, 8, 14, 0.72);
+        box-shadow:
+          0 18px 54px rgba(0, 0, 0, 0.45),
+          inset 0 1px 0 rgba(255, 255, 255, 0.04);
       }
 
       .hud {
         display: grid;
-        grid-template-columns: minmax(0, 1fr);
-        gap: 6px;
-        margin-bottom: 10px;
-        font-size: 14px;
+        gap: 12px;
+        margin-bottom: 12px;
       }
 
       .hud-row {
@@ -51,29 +62,265 @@
         flex-wrap: wrap;
       }
 
-      .hud strong {
-        color: var(--accent);
+      .title-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(5, 8, 13, 0.72);
+        border: 1px solid rgba(255, 255, 255, 0.06);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        font-size: 12px;
       }
 
-      #stats {
-        color: #c3d5ff;
-        font-size: 13px;
+      .title-chip::before {
+        content: "";
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        background: radial-gradient(circle at 30% 30%, #baf7ff, #2cc9b4 65%, #10414a 100%);
+        box-shadow: 0 0 12px rgba(121, 237, 214, 0.8);
+      }
+
+      .top-panels {
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+        gap: 12px;
+      }
+
+      .panel {
+        position: relative;
+        overflow: hidden;
+        min-height: 92px;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--panel-border);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0)),
+          var(--panel);
+        backdrop-filter: blur(5px);
+      }
+
+      .panel-label {
+        margin: 0 0 12px;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        font-size: 11px;
+      }
+
+      .health-strip,
+      .objective-strip,
+      .ability-strip {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .health-strip {
+        flex-wrap: wrap;
+      }
+
+      .hud-pip,
+      .objective-pip {
+        width: 30px;
+        height: 30px;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.35));
+      }
+
+      .hud-pip.is-empty,
+      .objective-pip.is-cleared {
+        opacity: 0.2;
+        filter: grayscale(0.7);
+      }
+
+      .ability-strip {
+        justify-content: flex-start;
+      }
+
+      .ability {
+        position: relative;
+        width: 58px;
+        height: 58px;
+        border-radius: 16px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background:
+          radial-gradient(circle at 50% 26%, rgba(255, 255, 255, 0.12), transparent 50%),
+          linear-gradient(180deg, rgba(19, 25, 38, 0.92), rgba(7, 10, 16, 0.96));
+        overflow: hidden;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+      }
+
+      .ability-icon {
+        position: absolute;
+        inset: 8px;
+        width: calc(100% - 16px);
+        height: calc(100% - 16px);
+        object-fit: contain;
+        image-rendering: pixelated;
+        z-index: 1;
+      }
+
+      .ability-fill {
+        position: absolute;
+        inset: 0;
+        transform-origin: bottom center;
+        background: linear-gradient(180deg, rgba(3, 7, 12, 0), rgba(3, 7, 12, 0.9) 55%, rgba(3, 7, 12, 0.98));
+        z-index: 2;
+      }
+
+      .ability-ready {
+        position: absolute;
+        inset: 2px;
+        border-radius: 14px;
+        border: 1px solid rgba(121, 237, 214, 0.85);
+        box-shadow:
+          0 0 18px rgba(121, 237, 214, 0.38),
+          inset 0 0 12px rgba(121, 237, 214, 0.14);
+        z-index: 3;
+      }
+
+      .ability.is-ready {
+        transform: translateY(-1px);
+      }
+
+      .rune-state {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 60px;
+        height: 60px;
+        border-radius: 18px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(9, 12, 18, 0.75);
+      }
+
+      .rune-state img {
+        width: 38px;
+        height: 38px;
+        image-rendering: pixelated;
+      }
+
+      .rune-state.is-locked img {
+        opacity: 0.35;
+        filter: saturate(0.4);
+      }
+
+      .rune-state.is-unlocked {
+        box-shadow: 0 0 20px rgba(121, 237, 214, 0.24);
+      }
+
+      .playfield {
+        position: relative;
       }
 
       canvas {
+        display: block;
         width: 100%;
         height: auto;
         max-height: min(72svh, 700px);
-        border: 2px solid #3b4458;
-        background: #0a0b11;
+        border-radius: 20px;
+        border: 2px solid rgba(112, 130, 156, 0.28);
+        background: #090b12;
         image-rendering: pixelated;
         image-rendering: crisp-edges;
       }
 
+      .overlay {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+        background: rgba(3, 5, 9, 0.72);
+        backdrop-filter: blur(6px);
+      }
+
+      .overlay[hidden] {
+        display: none;
+      }
+
+      .overlay-card {
+        width: min(100%, 360px);
+        padding: 22px;
+        border-radius: 24px;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        background:
+          linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0)),
+          rgba(7, 12, 18, 0.95);
+        text-align: center;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, 0.42);
+      }
+
+      .overlay-art {
+        width: 112px;
+        height: 112px;
+        image-rendering: pixelated;
+        filter: drop-shadow(0 8px 20px rgba(0, 0, 0, 0.4));
+      }
+
+      .overlay h2 {
+        margin: 10px 0 8px;
+        font-size: 28px;
+        letter-spacing: 0.04em;
+      }
+
+      .overlay p {
+        margin: 0;
+        color: #c8d2df;
+        line-height: 1.45;
+      }
+
+      .overlay button {
+        margin-top: 18px;
+        padding: 12px 18px;
+        min-width: 170px;
+        border: 0;
+        border-radius: 999px;
+        background: linear-gradient(180deg, #78edd5, #2aa799);
+        color: #051217;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .overlay button:hover {
+        filter: brightness(1.05);
+      }
+
       .hint {
-        margin-top: 10px;
-        font-size: 13px;
-        opacity: 0.9;
+        margin-top: 12px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .key-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        background: rgba(6, 9, 14, 0.74);
+        color: #c8d7eb;
+        font-size: 12px;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      @media (max-width: 720px) {
+        .top-panels {
+          grid-template-columns: 1fr;
+        }
+
+        .panel {
+          min-height: 84px;
+        }
       }
     </style>
   </head>
@@ -81,13 +328,58 @@
     <div class="game-shell">
       <div class="hud">
         <div class="hud-row">
-          <div><strong>Wizard Dungeon Explorer</strong></div>
-          <div id="status">Destroy the bone nests to unlock the rune.</div>
+          <div class="title-chip">Wizard Dungeon Explorer</div>
         </div>
-        <div id="stats">Health 5/5 | Nests 5 | Rune Locked | Fireball Ready</div>
+        <div class="top-panels">
+          <section class="panel" aria-labelledby="health-label">
+            <p class="panel-label" id="health-label">Vitality</p>
+            <div class="health-strip" id="health" aria-live="polite"></div>
+          </section>
+          <section class="panel" aria-labelledby="abilities-label">
+            <p class="panel-label" id="abilities-label">Arcana</p>
+            <div class="ability-strip">
+              <div class="ability" id="ability-fireball" data-ability="fireball" role="img">
+                <img class="ability-icon" alt="" />
+                <div class="ability-fill"></div>
+                <div class="ability-ready"></div>
+              </div>
+              <div class="ability" id="ability-jump" data-ability="jump" role="img">
+                <img class="ability-icon" alt="" />
+                <div class="ability-fill"></div>
+                <div class="ability-ready"></div>
+              </div>
+            </div>
+          </section>
+          <section class="panel" aria-labelledby="objective-label">
+            <p class="panel-label" id="objective-label">Objective</p>
+            <div class="hud-row">
+              <div class="objective-strip" id="nest-track" aria-live="polite"></div>
+              <div class="rune-state is-locked" id="rune-indicator" role="img">
+                <img id="rune-icon" alt="" />
+              </div>
+            </div>
+          </section>
+        </div>
       </div>
-      <canvas id="game" width="640" height="480" aria-label="game canvas"></canvas>
-      <div class="hint">Controls: W A S D + Space. Press R after winning or losing.</div>
+
+      <div class="playfield">
+        <canvas id="game" width="640" height="480" aria-label="game canvas"></canvas>
+        <div class="overlay" id="overlay" hidden>
+          <div class="overlay-card" role="dialog" aria-modal="true" aria-labelledby="overlay-title">
+            <img class="overlay-art" id="overlay-art" alt="" />
+            <h2 id="overlay-title"></h2>
+            <p id="overlay-subtitle"></p>
+            <button id="restart-button" type="button">Restart Run</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="hint" aria-label="controls">
+        <span class="key-chip">W A S D Move</span>
+        <span class="key-chip">Space Fireball</span>
+        <span class="key-chip">Shift Jump</span>
+        <span class="key-chip">R Restart</span>
+      </div>
     </div>
 
     <script type="module" src="./main.js"></script>

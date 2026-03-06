@@ -9,6 +9,8 @@ const FIREBALL_SPEED = 260;
 const FIREBALL_RADIUS = 4;
 const FIREBALL_STEP_PX = 2;
 const FIREBALL_COOLDOWN = 0.55;
+const JUMP_DISTANCE = TILE_SIZE * 2;
+const JUMP_COOLDOWN = 30;
 const IMPACT_DURATION = 0.24;
 const SKELETON_RADIUS = 10;
 const SKELETON_STEP = TILE_SIZE * 0.5;
@@ -31,52 +33,36 @@ const NEST_TILES = [
   [20, 17]
 ];
 
+const DEFAULT_UI_MANIFEST = {
+  health: "./assets/sprites/ui-health.svg",
+  fireball: "./assets/sprites/ui-fireball.svg",
+  jump: "./assets/sprites/ui-jump.svg",
+  nest: "./assets/sprites/ui-nest.svg",
+  victory: "./assets/sprites/ui-victory.svg",
+  defeat: "./assets/sprites/ui-defeat.svg"
+};
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-const statusEl = document.getElementById("status");
-const statsEl = document.getElementById("stats");
+const healthEl = document.getElementById("health");
+const fireballAbilityEl = document.getElementById("ability-fireball");
+const jumpAbilityEl = document.getElementById("ability-jump");
+const nestTrackEl = document.getElementById("nest-track");
+const runeIndicatorEl = document.getElementById("rune-indicator");
+const runeIconEl = document.getElementById("rune-icon");
+const overlayEl = document.getElementById("overlay");
+const overlayArtEl = document.getElementById("overlay-art");
+const overlayTitleEl = document.getElementById("overlay-title");
+const overlaySubtitleEl = document.getElementById("overlay-subtitle");
+const restartButtonEl = document.getElementById("restart-button");
 
 const keys = new Set();
 let inputClock = 0;
 const keyPressedAt = new Map();
 let castQueued = false;
-
-window.addEventListener("keydown", (e) => {
-  const key = e.key.toLowerCase();
-  if (e.code === "Space") {
-    e.preventDefault();
-    if (!e.repeat) {
-      castQueued = true;
-    }
-    return;
-  }
-
-  if (e.key === "r" || e.key === "R") {
-    if (gameState === "won" || gameState === "lost") {
-      window.location.reload();
-    }
-    return;
-  }
-
-  if (["w", "a", "s", "d"].includes(key)) {
-    e.preventDefault();
-    if (!keys.has(key)) {
-      keyPressedAt.set(key, ++inputClock);
-    }
-    keys.add(key);
-  }
-});
-
-window.addEventListener("keyup", (e) => {
-  if (e.code === "Space") {
-    return;
-  }
-  const key = e.key.toLowerCase();
-  keys.delete(key);
-  keyPressedAt.delete(key);
-});
+let jumpQueued = false;
 
 const map = [
   "##############################",
@@ -124,6 +110,10 @@ const fireball = {
   cooldownUntil: 0
 };
 
+const jump = {
+  cooldownUntil: 0
+};
+
 const impactEffect = {
   active: false,
   x: 0,
@@ -137,7 +127,62 @@ let skeletonIdCounter = 0;
 let gameTime = 0;
 let gameState = "playing";
 let runeUnlocked = false;
-let statusMessage = "Destroy the bone nests to unlock the rune.";
+let last = performance.now();
+let uiManifest = { ...DEFAULT_UI_MANIFEST };
+const healthPips = [];
+const nestPips = [];
+
+const overlayState = {
+  visible: false
+};
+
+window.addEventListener("keydown", (e) => {
+  const key = e.key.toLowerCase();
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    if (!e.repeat) {
+      castQueued = true;
+    }
+    return;
+  }
+
+  if (e.key === "Shift") {
+    e.preventDefault();
+    if (!e.repeat) {
+      jumpQueued = true;
+    }
+    return;
+  }
+
+  if (e.key === "r" || e.key === "R") {
+    if (gameState === "won" || gameState === "lost") {
+      resetGame();
+    }
+    return;
+  }
+
+  if (["w", "a", "s", "d"].includes(key)) {
+    e.preventDefault();
+    if (!keys.has(key)) {
+      keyPressedAt.set(key, ++inputClock);
+    }
+    keys.add(key);
+  }
+});
+
+window.addEventListener("keyup", (e) => {
+  if (e.code === "Space" || e.key === "Shift") {
+    return;
+  }
+  const key = e.key.toLowerCase();
+  keys.delete(key);
+  keyPressedAt.delete(key);
+});
+
+restartButtonEl.addEventListener("click", () => {
+  resetGame();
+});
 
 function tileAtPixel(px, py) {
   const tx = Math.floor(px / TILE_SIZE);
@@ -251,6 +296,17 @@ function normalizeAnimationManifest(entry) {
   return [];
 }
 
+function normalizeUiManifest(entry) {
+  return {
+    health: entry?.health || DEFAULT_UI_MANIFEST.health,
+    fireball: entry?.fireball || DEFAULT_UI_MANIFEST.fireball,
+    jump: entry?.jump || DEFAULT_UI_MANIFEST.jump,
+    nest: entry?.nest || DEFAULT_UI_MANIFEST.nest,
+    victory: entry?.victory || DEFAULT_UI_MANIFEST.victory,
+    defeat: entry?.defeat || DEFAULT_UI_MANIFEST.defeat
+  };
+}
+
 async function loadSprites() {
   const manifest = await loadManifest();
   const wizardManifest = normalizeDirectionalManifest(manifest.wizard, "wizard");
@@ -281,6 +337,8 @@ async function loadSprites() {
           "./assets/sprites/fireball-impact-2.svg",
           "./assets/sprites/fireball-impact-3.svg"
         ];
+
+  uiManifest = normalizeUiManifest(manifest.ui);
 
   const [
     wizardUp,
@@ -400,21 +458,116 @@ function triggerImpact(x, y) {
   impactEffect.age = 0;
 }
 
-function setStatus(message) {
-  statusMessage = message;
-}
-
-function updateHud() {
-  const livingNests = nests.filter((nest) => !nest.destroyed).length;
-  const cooldownRemaining = Math.max(0, fireball.cooldownUntil - gameTime);
-  const fireballReady = !fireball.active && cooldownRemaining <= 0;
-  const runeState = runeUnlocked ? "Unlocked" : "Locked";
-  statusEl.textContent = statusMessage;
-  statsEl.textContent = `Health ${player.health}/${player.maxHealth} | Nests ${livingNests} | Rune ${runeState} | Fireball ${fireballReady ? "Ready" : `${cooldownRemaining.toFixed(1)}s`}`;
+function livingNestsCount() {
+  return nests.filter((nest) => !nest.destroyed).length;
 }
 
 function canCastFireball() {
   return gameState === "playing" && !fireball.active && gameTime >= fireball.cooldownUntil;
+}
+
+function canJump() {
+  return gameState === "playing" && gameTime >= jump.cooldownUntil;
+}
+
+function fireballCooldownRemaining() {
+  return Math.max(0, fireball.cooldownUntil - gameTime);
+}
+
+function jumpCooldownRemaining() {
+  return Math.max(0, jump.cooldownUntil - gameTime);
+}
+
+function renderHealth() {
+  if (healthPips.length !== player.maxHealth) {
+    healthPips.length = 0;
+    healthEl.innerHTML = "";
+    for (let i = 0; i < player.maxHealth; i += 1) {
+      const pip = document.createElement("img");
+      pip.className = "hud-pip";
+      pip.src = uiManifest.health;
+      pip.alt = "";
+      pip.decoding = "async";
+      healthPips.push(pip);
+      healthEl.appendChild(pip);
+    }
+  }
+
+  healthPips.forEach((pip, index) => {
+    pip.classList.toggle("is-filled", index < player.health);
+    pip.classList.toggle("is-empty", index >= player.health);
+  });
+  healthEl.setAttribute("aria-label", `Health ${player.health} out of ${player.maxHealth}`);
+}
+
+function renderNestTrack() {
+  const destroyedCount = nests.filter((nest) => nest.destroyed).length;
+  if (nestPips.length !== nests.length) {
+    nestPips.length = 0;
+    nestTrackEl.innerHTML = "";
+    for (let i = 0; i < nests.length; i += 1) {
+      const marker = document.createElement("img");
+      marker.className = "objective-pip";
+      marker.src = uiManifest.nest;
+      marker.alt = "";
+      marker.decoding = "async";
+      nestPips.push(marker);
+      nestTrackEl.appendChild(marker);
+    }
+  }
+
+  nestPips.forEach((pip, index) => {
+    pip.classList.toggle("is-cleared", index < destroyedCount);
+  });
+  nestTrackEl.setAttribute("aria-label", `${destroyedCount} of ${nests.length} nests destroyed`);
+}
+
+function setAbilityVisual(slotEl, cooldownRemaining, cooldownDuration, activeLabel) {
+  const fillEl = slotEl.querySelector(".ability-fill");
+  const glowEl = slotEl.querySelector(".ability-ready");
+  const ready = cooldownRemaining <= 0;
+  const progress = ready ? 0 : clamp(cooldownRemaining / cooldownDuration, 0, 1);
+
+  fillEl.style.transform = `scaleY(${progress})`;
+  slotEl.classList.toggle("is-ready", ready);
+  glowEl.hidden = !ready;
+  slotEl.setAttribute("aria-label", ready ? `${activeLabel} ready` : `${activeLabel} cooling down`);
+}
+
+function updateHud() {
+  renderHealth();
+  renderNestTrack();
+
+  const runeLocked = !runeUnlocked;
+  runeIndicatorEl.classList.toggle("is-unlocked", !runeLocked);
+  runeIndicatorEl.classList.toggle("is-locked", runeLocked);
+  runeIndicatorEl.setAttribute("aria-label", runeLocked ? "Rune locked" : "Rune unlocked");
+  runeIconEl.src = "./assets/sprites/objective.svg";
+
+  setAbilityVisual(fireballAbilityEl, fireballCooldownRemaining(), FIREBALL_COOLDOWN, "Fireball");
+  setAbilityVisual(jumpAbilityEl, jumpCooldownRemaining(), JUMP_COOLDOWN, "Jump");
+}
+
+function showOverlay(kind) {
+  overlayState.visible = true;
+  overlayEl.hidden = false;
+  overlayEl.dataset.state = kind;
+
+  if (kind === "won") {
+    overlayArtEl.src = uiManifest.victory;
+    overlayTitleEl.textContent = "Dungeon Cleared";
+    overlaySubtitleEl.textContent = "The rune is yours. Press R or restart to run it again.";
+  } else {
+    overlayArtEl.src = uiManifest.defeat;
+    overlayTitleEl.textContent = "The Wizard Fell";
+    overlaySubtitleEl.textContent = "Recover your footing. Press R or restart to try again.";
+  }
+}
+
+function hideOverlay() {
+  overlayState.visible = false;
+  overlayEl.hidden = true;
+  overlayEl.dataset.state = "";
 }
 
 function spawnFireball() {
@@ -426,6 +579,35 @@ function spawnFireball() {
   fireball.vx = dx;
   fireball.vy = dy;
   fireball.cooldownUntil = gameTime + FIREBALL_COOLDOWN;
+  return true;
+}
+
+function killPlayer(reason = "combat") {
+  if (gameState !== "playing") return;
+  gameState = "lost";
+  fireball.active = false;
+  if (reason === "jump-wall") {
+    triggerImpact(player.x, player.y);
+  }
+  showOverlay("lost");
+}
+
+function attemptJump() {
+  const [dx, dy] = directionFromFacing(player.facing);
+  if (!dx && !dy) return false;
+
+  jump.cooldownUntil = gameTime + JUMP_COOLDOWN;
+  const nx = player.x + dx * JUMP_DISTANCE;
+  const ny = player.y + dy * JUMP_DISTANCE;
+
+  player.x = nx;
+  player.y = ny;
+  if (!canMoveTo(player.x, player.y)) {
+    killPlayer("jump-wall");
+    return true;
+  }
+
+  triggerImpact(player.x, player.y);
   return true;
 }
 
@@ -514,23 +696,9 @@ function initializeSkeletons() {
   }
 }
 
-function livingNestsCount() {
-  return nests.filter((nest) => !nest.destroyed).length;
-}
-
 function unlockRuneIfCleared() {
   if (runeUnlocked || livingNestsCount() > 0) return;
   runeUnlocked = true;
-  setStatus("The rune is exposed. Reach it to clear the dungeon.");
-}
-
-function setSkeletonKilledStatus() {
-  if (gameState !== "playing") return;
-  if (!runeUnlocked) {
-    setStatus(`Bone nest hunt underway. ${livingNestsCount()} nests remain.`);
-  } else {
-    setStatus("The rune is exposed. Reach it to clear the dungeon.");
-  }
 }
 
 function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
@@ -540,7 +708,11 @@ function killSkeleton(skeleton, hitX, hitY, hitDx, hitDy) {
   skeleton.hitDx = hitDx;
   skeleton.hitDy = hitDy;
   triggerImpact(hitX, hitY);
-  setSkeletonKilledStatus();
+}
+
+function resetAbilityCooldowns() {
+  fireball.cooldownUntil = gameTime;
+  jump.cooldownUntil = gameTime;
 }
 
 function destroyNest(nest, hitX, hitY) {
@@ -548,10 +720,8 @@ function destroyNest(nest, hitX, hitY) {
   nest.health = 0;
   triggerImpact(hitX, hitY);
   player.health = clamp(player.health + NEST_HEAL_AMOUNT, 0, player.maxHealth);
+  resetAbilityCooldowns();
   unlockRuneIfCleared();
-  if (!runeUnlocked) {
-    setStatus(`Nest shattered. ${livingNestsCount()} nests remain.`);
-  }
 }
 
 function damageNest(nest, hitX, hitY) {
@@ -560,9 +730,7 @@ function damageNest(nest, hitX, hitY) {
   triggerImpact(hitX, hitY);
   if (nest.health <= 0) {
     destroyNest(nest, hitX, hitY);
-    return;
   }
-  setStatus(`Nest cracked. ${nest.health} hit${nest.health === 1 ? "" : "s"} to go.`);
 }
 
 function updateFireball(dt) {
@@ -661,13 +829,8 @@ function damagePlayer() {
   player.invulnerableUntil = gameTime + PLAYER_HIT_COOLDOWN;
 
   if (player.health <= 0) {
-    gameState = "lost";
-    fireball.active = false;
-    setStatus("The wizard fell. Press R to restart.");
-    return;
+    killPlayer("combat");
   }
-
-  setStatus("The skeletons closed in. Keep moving.");
 }
 
 function updateSkeletons(dt) {
@@ -715,12 +878,64 @@ function updateNests() {
     if (aliveSkeletonsCount() >= SKELETON_ALIVE_CAP) return;
     if (gameTime < nest.nextSpawnAt) continue;
 
-    const spawned = spawnSkeletonAt(nest.x, nest.y);
+    spawnSkeletonAt(nest.x, nest.y);
     nest.nextSpawnAt = gameTime + randomInRange(NEST_SPAWN_INTERVAL_MIN, NEST_SPAWN_INTERVAL_MAX);
-    if (spawned && !runeUnlocked) {
-      setStatus(`Skeletons are pouring out. ${livingNestsCount()} nests remain.`);
-    }
   }
+}
+
+function handleRuneState() {
+  const tile = tileAtPixel(player.x, player.y);
+  if (tile !== "R") return;
+  if (!runeUnlocked) return;
+
+  gameState = "won";
+  fireball.active = false;
+  showOverlay("won");
+}
+
+function initializeGameState() {
+  player.x = TILE_SIZE * 1.5;
+  player.y = TILE_SIZE * 1.5;
+  player.facing = "down";
+  player.health = PLAYER_MAX_HEALTH;
+  player.maxHealth = PLAYER_MAX_HEALTH;
+  player.invulnerableUntil = 0;
+
+  fireball.active = false;
+  fireball.x = 0;
+  fireball.y = 0;
+  fireball.vx = 0;
+  fireball.vy = 0;
+  fireball.cooldownUntil = 0;
+
+  jump.cooldownUntil = 0;
+
+  impactEffect.active = false;
+  impactEffect.x = 0;
+  impactEffect.y = 0;
+  impactEffect.age = 0;
+
+  skeletons.length = 0;
+  nests.length = 0;
+  skeletonIdCounter = 0;
+  gameTime = 0;
+  gameState = "playing";
+  runeUnlocked = false;
+
+  initializeNests();
+  initializeSkeletons();
+  hideOverlay();
+  updateHud();
+}
+
+function resetGame() {
+  keys.clear();
+  keyPressedAt.clear();
+  castQueued = false;
+  jumpQueued = false;
+  inputClock = 0;
+  last = performance.now();
+  initializeGameState();
 }
 
 function update(dt) {
@@ -740,10 +955,8 @@ function update(dt) {
 
   const [dx, dy] = normalize(mx, my);
   const step = PLAYER_SPEED * dt;
-
   const nx = player.x + dx * step;
   const ny = player.y + dy * step;
-
   const prevX = player.x;
   const prevY = player.y;
 
@@ -755,27 +968,25 @@ function update(dt) {
     player.facing = facing;
   }
 
-  if (castQueued && canCastFireball()) {
+  if (jumpQueued && canJump()) {
+    attemptJump();
+  } else if (castQueued && canCastFireball()) {
     spawnFireball();
   }
   castQueued = false;
+  jumpQueued = false;
+
+  if (gameState !== "playing") {
+    updateHud();
+    return;
+  }
 
   updateNests();
   updateSkeletons(dt);
   updateFireball(dt);
   updateImpact(dt);
   unlockRuneIfCleared();
-
-  const tile = tileAtPixel(player.x, player.y);
-  if (tile === "R") {
-    if (runeUnlocked) {
-      gameState = "won";
-      setStatus("Rune recovered. Dungeon cleared. Press R to play again.");
-    } else {
-      setStatus(`The rune is sealed. ${livingNestsCount()} nests still feed it.`);
-    }
-  }
-
+  handleRuneState();
   updateHud();
 }
 
@@ -827,9 +1038,9 @@ function drawWorld(sprites) {
             ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
           } else {
             ctx.save();
-            ctx.globalAlpha = 0.45;
+            ctx.globalAlpha = 0.35;
             ctx.drawImage(sprites.rune, sx, sy, TILE_SIZE, TILE_SIZE);
-            ctx.fillStyle = "rgba(64, 170, 190, 0.35)";
+            ctx.fillStyle = "rgba(18, 43, 54, 0.55)";
             ctx.fillRect(sx, sy, TILE_SIZE, TILE_SIZE);
             ctx.restore();
           }
@@ -921,14 +1132,17 @@ function drawWorld(sprites) {
   ctx.restore();
 }
 
-let last = performance.now();
+function hydrateHudAssets() {
+  document.querySelector('[data-ability="fireball"] .ability-icon').src = uiManifest.fireball;
+  document.querySelector('[data-ability="jump"] .ability-icon').src = uiManifest.jump;
+  runeIconEl.src = "./assets/sprites/objective.svg";
+}
 
 async function start() {
   try {
     const sprites = await loadSprites();
-    initializeNests();
-    initializeSkeletons();
-    updateHud();
+    hydrateHudAssets();
+    initializeGameState();
 
     function frame(now) {
       const dt = Math.min((now - last) / 1000, 1 / 20);
@@ -940,7 +1154,10 @@ async function start() {
 
     requestAnimationFrame(frame);
   } catch (error) {
-    statusEl.textContent = error.message;
+    overlayEl.hidden = false;
+    overlayTitleEl.textContent = "Load Error";
+    overlaySubtitleEl.textContent = error.message;
+    restartButtonEl.hidden = true;
     console.error(error);
   }
 }

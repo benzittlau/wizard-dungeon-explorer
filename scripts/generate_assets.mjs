@@ -117,6 +117,36 @@ async function main() {
       id: "objective",
       description:
         "top-down glowing arcane rune tile icon, cyan magic glyph, readable and centered, 32x32, transparent background"
+    },
+    {
+      id: "ui-health",
+      description:
+        "fantasy game UI heart gem icon, cyan core in gold setting, 32x32, transparent background"
+    },
+    {
+      id: "ui-fireball",
+      description:
+        "fantasy game UI ability icon, bright ember fireball with magical trail, 32x32, transparent background"
+    },
+    {
+      id: "ui-jump",
+      description:
+        "fantasy game UI ability icon, arcane blink sigil with motion streaks, teal magic, 32x32, transparent background"
+    },
+    {
+      id: "ui-nest",
+      description:
+        "fantasy game UI objective icon, cracked bone nest emblem, top-down readable symbol, 32x32, transparent background"
+    },
+    {
+      id: "ui-victory",
+      description:
+        "fantasy game UI emblem, radiant rune and laurel victory badge, 64x64 feeling but rendered in 32x32, transparent background"
+    },
+    {
+      id: "ui-defeat",
+      description:
+        "fantasy game UI emblem, shattered staff and skull defeat badge, 32x32, transparent background"
     }
   ];
 
@@ -131,6 +161,21 @@ async function main() {
     manifest[request.id] = relativePath;
     console.log(`Generated ${request.id} (${callCount}/${MAX_CALLS})`);
   }
+
+  manifest.ui = {
+    health: manifest["ui-health"],
+    fireball: manifest["ui-fireball"],
+    jump: manifest["ui-jump"],
+    nest: manifest["ui-nest"],
+    victory: manifest["ui-victory"],
+    defeat: manifest["ui-defeat"]
+  };
+  delete manifest["ui-health"];
+  delete manifest["ui-fireball"];
+  delete manifest["ui-jump"];
+  delete manifest["ui-nest"];
+  delete manifest["ui-victory"];
+  delete manifest["ui-defeat"];
 
   await fs.writeFile(MANIFEST_PATH, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
   console.log(`Manifest written: ${MANIFEST_PATH}`);
